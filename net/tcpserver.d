@@ -1,7 +1,9 @@
 ﻿module denpasar.net.tcpserver;
 
-public import std.socket;
+import denpasar.base.classes;
 
-interface TcpServer{
+class TcpServer : Activable {
+protected:
 
 }
+
