@@ -61,32 +61,32 @@ protected:
 
 	void beforeActivation()
 	{
-		callEvent(_onBeforeActivation, this);
+		fireEvent(_onBeforeActivation, this);
 	}
 
 	void beforeDeactivation()
 	{
-		callEvent(_onBeforeDeactivation, this);
+		fireEvent(_onBeforeDeactivation, this);
 	}
 
 	void activationSuccess()
 	{
-		callEvent(_onActivationSuccess, this);
+		fireEvent(_onActivationSuccess, this);
 	}
 
 	void deactivationSuccess()
 	{
-		callEvent(_onDeactivationSuccess, this);
+		fireEvent(_onDeactivationSuccess, this);
 	}
 
 	void activationFailure(Exception e)
 	{
-		callEvent(_onActivationFailure, this, e);
+		fireEvent(_onActivationFailure, this, e);
 	}
 
 	void deactivationFailure(Exception e)
 	{
-		callEvent(_onDeactivationFailure, this, e);
+		fireEvent(_onDeactivationFailure, this, e);
 	}
 
 	abstract void rawActivate();
