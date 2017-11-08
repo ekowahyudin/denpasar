@@ -55,6 +55,16 @@ class Listener : Activable {
 		return _socket;
 	}
 
+	void onIncommingClient(void delegate(Listener, Socket) callback)
+	{
+		_onIncommingClient = callback;
+	}
+
+	void onFirewallCheck(void delegate(Listener, Socket) callback)
+	{
+		_onFirewallCheck = callback;
+	}
+
 protected:
 
 	@property
@@ -101,23 +111,33 @@ protected:
 		SocketSelector.instance.onDataReady(socket,
 			delegate(Socket socket) nothrow
 			{
-				try{
-					Socket peer = socket.accept;
+				Socket peer = null;
+				try
+				{
+					peer = socket.accept;
+					peer.blocking = false;
 					firewallCheck(peer);
 					parallelTask(_onIncommingClient, this, peer);
 				}
-				catch(Throwable e){
+				catch(Throwable e)
+				{
+					if( peer !is null)
+						peer.close;
 				}
-				finally{
+				finally
+				{
 					futureTask(&listen);
 				}
 			}
 		);
 	}
 
+	/**
+	 * throw exception if connection is rejected
+	 */
 	void firewallCheck(Socket socket)
 	{
-		callEvent(_onFirewallCheck, this, socket);
+		fireEvent(_onFirewallCheck, this, socket);
 	}
 
 private:

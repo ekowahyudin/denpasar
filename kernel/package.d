@@ -5,6 +5,7 @@ import core.sync.condition;
 import core.sync.mutex;
 import core.thread;
 import denpasar.base.classes;
+import denpasar.utils.set;
 import std.meta;
 import std.stdio;
 import std.traits;
@@ -17,10 +18,24 @@ abstract class Task : Executable{
 		done
 	}
 
-	~this(){
+	this() nothrow
+	{
+		synchronized
+		{
+			_id = ++_nextTaskId;
+		}
+	}
+
+	~this()
+	{
 		debug(KernelTask){
 			writefln("Task destroyed");
 		}
+	}
+
+	long id()
+	{
+		return _id;
 	}
 	
 	public Status status() @property{
@@ -39,30 +54,96 @@ abstract class Task : Executable{
 		_thrownObject = value;
 	}
 
-	public bool isParallelTask() @property 
+	public bool isParallelTask() nothrow @property 
 	{
 		return _isParallelTask;
 	}
 
-	public sizediff_t priority() @property
+	public sizediff_t priority() nothrow @property
 	{
 		return _priority;
 	}
 
-	public void priority(sizediff_t value) @property
+	public void priority(sizediff_t value) nothrow @property
 	{
 		_priority = value;
 	}
 
-	public size_t queueNumber(){
-		return _queueNumber;
+	public void onSuccess(void delegate() dg) @property
+	{
+		installEvent(_onSuccessSet, dg);
 	}
 
-	public void queueNumber(size_t value){
+	public void onSuccess(void delegate(Throwable) dg) @property
+	{
+		installEvent(_onSuccessThrownSet, dg, thrownObject);
+	}
+
+	public void onFailure(void delegate(Exception) dg) @property
+	{
+		synchronized(this)
+		{
+			Exception ex = cast(Exception) this.thrownObject;
+			installEventNoSync(_onFailureSet, dg, ex);
+		}
+	}
+
+	public void onDone(void delegate() dg) @property
+	{
+		installEvent(_onDoneSet, dg);
+	}
+
+	public void onDone(void delegate(Throwable) dg) @property
+	{
+		installEvent(_onDoneThrownSet, dg, this.thrownObject);
+	}
+
+protected:
+
+	void installEvent(Pool, Callback, Args...)(Pool pool, Callback callback, Args args)
+	{
+		synchronized(this)
+		{
+			installEventNoSync(pool,callback,args);
+		}
+	}
+
+	void installEventNoSync(Pool, Callback, Args...)(ref Pool pool, Callback callback, Args args)
+	{
+		if( !invokeOnDone(callback, args) )
+		{
+			if( pool is null )
+			{
+				pool = new Pool;
+			}
+			pool ~= callback;
+		}
+	}
+
+	bool invokeOnDone(Func,Args...)(Func func, Args args)
+	{
+		if( status == Status.done )
+		{
+			if( isParallelTask )
+			{
+				parallelTask(func, args);
+			}
+			else
+			{
+				futureTask(func, args);
+			}
+			return true;
+		}
+		return false;
+	}
+
+	size_t queueNumber() nothrow{
+		return _queueNumber;
+	}
+	
+	void queueNumber(size_t value) nothrow{
 		_queueNumber = value;
 	}
-protected:
-	Fiber _fiber;
 
 	protected void execute()
 	{
@@ -87,9 +168,12 @@ protected:
 		
 		if( fiber.state == Fiber.State.TERM )
 		{
-			status = Status.done;
-			//task is terminated
 			taskManager.recycleFiber(fiber);
+			synchronized(this)
+			{
+				status = Status.done;
+				fireFulfilled();
+			}
 		}
 		else{
 			//submit for next time execution
@@ -99,7 +183,63 @@ protected:
 
 	abstract void rawExecute();
 
+	void fireFulfilled()
+	{
+		Exception ex = cast(Exception) thrownObject;
+		if( ex !is null )
+		{
+			fireFailure(ex);
+		}
+		else
+		{
+			fireSuccess();
+		}
+		fireDone();
+	}
+
+	void fireFailure(Exception ex)
+	{
+		fireCallback(_onFailureSet,ex);
+	}
+
+	void fireSuccess()
+	{
+		fireCallback(_onSuccessThrownSet, this.thrownObject);
+		fireCallback(_onSuccessSet);
+	}
+
+	void fireDone()
+	{
+		fireCallback(_onDoneThrownSet, this.thrownObject);
+		fireCallback(_onDoneSet);
+	}
+
+	void fireCallback(Delegates, Args...)(Delegates dgs, Args args)
+	{
+		if( isParallelTask )
+		{
+			foreach(void delegate(Args) dg; dgs)
+			{
+				parallelTask(dg, args);
+			}
+		}
+		else
+		{
+			foreach(void delegate(Args) dg; dgs)
+			{
+				futureTask(dg, args);
+			}
+		}
+	}
+
 private:
+	SetOf!(void delegate(Exception)) _onFailureSet;
+	SetOf!(void delegate()) _onSuccessSet;
+	SetOf!(void delegate(Throwable)) _onSuccessThrownSet;
+	SetOf!(void delegate()) _onDoneSet;
+	SetOf!(void delegate(Throwable)) _onDoneThrownSet;
+
+	Fiber _fiber;
 	size_t _queueNumber;
 	sizediff_t _priority = 1;
 	bool _isParallelTask = false;
@@ -107,9 +247,31 @@ private:
 	Throwable _thrownObject=null;
 	Task _next;
 	Task _prev;
+	long _id=0;
+
+	__gshared
+	{
+		static long _nextTaskId=0;
+	}
 }
 
 class FuncTask(Result) : Task{
+	this() nothrow
+	{
+		super();
+		_onDoneSet = new SetOf!(void delegate(FuncTask!Result))();
+		_onThisSuccessSet = new SetOf!(void delegate(FuncTask!Result))();
+		static if( !is(Result==void) )
+		{
+			_onSuccessResultSet = new SetOf!(void delegate(Result))();
+		}
+	}
+
+	~this()
+	{
+		_onDoneSet.destroy;
+	}
+
 	static if( !is(Result == void))
 	{
 		private Result _result;
@@ -158,12 +320,63 @@ class FuncTask(Result) : Task{
 			return result;
 		}
 	}
+
+	alias onDone = super.onDone;
+	alias onSuccess = super.onSuccess;
+
+	void onDone(void delegate(FuncTask!Result) dg) @property
+	{
+		synchronized(this)
+		{
+			if( status == Status.done )
+			{
+				if( isParallelTask )
+				{
+					parallelTask(dg, this);
+				}
+				else
+				{
+					futureTask(dg, this);
+				}
+			}
+			else
+			{
+				_onDoneSet ~= dg;
+			}
+		}
+	}
+
+protected:
+	override protected void fireDone()
+	{
+		super.fireDone;
+		fireEvent(_onDoneSet, this);
+	}
+
+	override protected void fireSuccess()
+	{
+		super.fireSuccess;
+		static if( !is(Result==void) )
+		{
+			fireEvent(_onSuccessResultSet, this.result);
+		}
+		fireEvent(_onThisSuccessSet, this);
+	}
+
+private:
+	SetOf!(void delegate(FuncTask!Result)) _onDoneSet;
+	SetOf!(void delegate(FuncTask!Result)) _onThisSuccessSet;
+	static if(!is(Result==void))
+	{
+		SetOf!(void delegate(Result)) _onSuccessResultSet;
+	}
 }
 
 class FuncTaskImpl(Result, Func, Args...) : FuncTask!Result
 {	
-	this(Func func, Args args)
+	this(Func func, Args args) nothrow
 	{
+		super();
 		_func = func;
 		_args = args;
 	}
@@ -187,13 +400,13 @@ private:
 
 
 class TaskManager{
-	protected this(){
+	protected this() nothrow{
 		_fiberMutex = new Mutex;
 		_promiseMutex = new Mutex;
 		_hasFutureTask = new Condition(_promiseMutex);
 	}
 
-	static TaskManager instance(){
+	static TaskManager instance() nothrow{
 		if( !_instanceCreated ){
 			synchronized{
 				if( _instance is null ){
@@ -205,20 +418,33 @@ class TaskManager{
 		return _instance;
 	}
 
-	Task submit(Task task){
+	Task submit(Task task) nothrow{
 		lockFutureTask;
 		scope(exit) unlockFutureTask;
 		return submitNoLock(task);
 	}
 
-	void yield(){
-		Fiber fiber = Fiber.getThis;
-		if( fiber !is null ){
-			Fiber.yield;
+	void yield() nothrow{
+		try
+		{
+			Fiber fiber = Fiber.getThis;
+			if( fiber !is null ){
+				Fiber.yield;
+			}
+			else{
+				Thread.yield;
+			}
 		}
-		else{
-			Thread.yield;
+		catch(Throwable t)
+		{
+
 		}
+	}
+
+	void main(){
+		Thread thisThread = Thread.getThis;
+		thisThread.priority = Thread.PRIORITY_MAX;
+		run(true);
 	}
 
 	/**
@@ -236,18 +462,18 @@ class TaskManager{
 		return true;
 	}
 
-	void terminate()
+	void terminate() nothrow
 	{
-		_isTerminated = true;
+		isTerminated = true;
 		notifyAll;
 	}
 
-	bool isTerminated() @property
+	bool isTerminated() nothrow @property
 	{
 		return cast(bool) atomicLoad(_isTerminated);
 	}
 
-	void isTerminated(bool value) @property
+	void isTerminated(bool value) nothrow @property
 	{
 		atomicStore(_isTerminated, value);
 	}
@@ -290,14 +516,16 @@ protected:
 		}
 	}
 
-	Task submitNoLock(Task task){
+	Task submitNoLock(Task task) nothrow
+	{
 		task.queueNumber = nextTaskQueue;
 		submitChainNoLock(_futureTasks, task);
 		notifyHasFutureTask();
 		return task;
 	}
 	
-	void submitChainNoLock(ref TaskChain chain, Task task){
+	void submitChainNoLock(ref TaskChain chain, Task task) nothrow
+	{
 		Task first = chain.first;
 		Task last = chain.last;
 		if( last is null || first is null){
@@ -389,37 +617,92 @@ protected:
 		_fibers ~= fiber;
 	}
 
-	void lockFiber(){
-		while(!_fiberMutex.tryLock)
-			yield;
+	void lockFiber() nothrow
+	{
+		bool unlocked = true;
+		while(unlocked)
+		{
+			try{
+				while(!_fiberMutex.tryLock)
+					yield;
+				unlocked = false;
+			}
+			catch(Throwable t)
+			{
+				
+			}
+		}
 	}
 	
-	void unlockFiber()
+	void unlockFiber() nothrow
 	{
-		_fiberMutex.unlock;
+		bool locked = true;
+		while(locked){
+			try{
+				_fiberMutex.unlock;
+				locked = false;
+			}
+			catch(Throwable t){
+
+			}
+		}
 	}
 
-	void lockFutureTask()
+	void lockFutureTask() nothrow
 	{
-		while(!_promiseMutex.tryLock)
-			yield;
+		bool locked = false;
+		while(!locked)
+		{
+			try
+			{
+				while(!_promiseMutex.tryLock)
+					yield;
+				locked = true;
+			}
+			catch(Throwable t)
+			{
+			}
+		}
 	}
 	
-	void unlockFutureTask()
+	void unlockFutureTask() nothrow
 	{
-		_promiseMutex.unlock;
+		bool unlocked = false;
+		while( !unlocked )
+		{
+			try
+			{
+				_promiseMutex.unlock;
+				unlocked = true;
+			}
+			catch(Throwable t)
+			{
+			}
+		}
 	}
 	
-	void notifyHasFutureTask()
+	void notifyHasFutureTask() nothrow
 	{
-		_hasFutureTask.notify;
+		try
+		{
+			_hasFutureTask.notify;
+		}
+		catch(Throwable t)
+		{
+		}
 	}
 
-	void notifyAll(){
-		_hasFutureTask.notifyAll;
+	void notifyAll() nothrow{
+		try
+		{
+			_hasFutureTask.notifyAll;
+		}
+		catch(Throwable t)
+		{
+		}
 	}
 
-	size_t nextTaskQueue() @property{
+	size_t nextTaskQueue() nothrow @property{
 		synchronized{
 			return _nextTaskQueue++;
 		}
@@ -432,8 +715,6 @@ private:
 	}
 
 	shared bool _isTerminated = false;
-	static TaskManager _instance;
-	static bool _instanceCreated = false;
 	Mutex _fiberMutex;
 	Mutex _promiseMutex;
 	Condition _hasFutureTask;
@@ -441,63 +722,100 @@ private:
 	Fiber[] _fibers;
 	TaskChain _futureTasks;
 	__gshared{
+		static TaskManager _instance;
+		static bool _instanceCreated = false;
 		static size_t _nextTaskQueue=0;
 	}
 }
 
-auto createTask(Func, Args...)(Func func, Args args)  if(is(typeof(func(args))) && !isSafeTask!Func)
+auto createTask(Func, Args...)(Func func, Args args) nothrow if(is(typeof(func(args))) && !isSafeTask!Func)
 {
 	alias Result = typeof(func(args));
 	return new FuncTaskImpl!(Result, Func, Args)(func, args);
 }
 
-@trusted auto createTask(Func, Args...)(Func func, Args args) if(is(typeof(func(args))) && isSafeTask!Func)
+@trusted auto createTask(Func, Args...)(Func func, Args args) nothrow if(is(typeof(func(args))) && isSafeTask!Func)
 {
 	alias Result = typeof(func(args));
 	return new FuncTaskImpl!(Result, Func, Args)(func, args);
 }
 
-auto createParallelTask(Func, Args...)(Func func, Args args)  if(is(typeof(func(args))) && !isSafeTask!Func)
+auto createParallelTask(Func, Args...)(Func func, Args args) nothrow if(is(typeof(func(args))) && !isSafeTask!Func)
 {
 	auto result = createTask(func, args);
 	result._isParallelTask = true;
 	return result;
 }
 
-@trusted auto createParallelTask(Func, Args...)(Func func, Args args) if(is(typeof(func(args))) && isSafeTask!Func)
+@trusted auto createParallelTask(Func, Args...)(Func func, Args args) nothrow if(is(typeof(func(args))) && isSafeTask!Func)
 {
 	auto result = createTask(func, args);
 	result._isParallelTask = true;
 	return result;
 }
 
-auto futureTask(Func, Args...)(Func func, Args args) if(is(typeof(func(args))) && !isSafeTask!Func)
+auto futureTask(Func, Args...)(Func func, Args args) nothrow if(is(typeof(func(args))) && !isSafeTask!Func)
 {
 	auto result = createTask(func, args);
 	TaskManager.instance.submit(result);
 	return result;
 }
 
-@trusted auto futureTask(Func, Args...)(Func func, Args args) if(is(typeof(func(args))) && isSafeTask!Func)
+@trusted auto futureTask(Func, Args...)(Func func, Args args) nothrow if(is(typeof(func(args))) && isSafeTask!Func)
 {
 	auto result = createTask(func, args);
 	TaskManager.instance.submit(result);
 	return result;
 }
 
-auto parallelTask(Func, Args...)(Func func, Args args) if(is(typeof(func(args))) && !isSafeTask!Func)
+auto parallelTask(Func, Args...)(Func func, Args args) nothrow if(is(typeof(func(args))) && !isSafeTask!Func)
 {
 	auto result = createParallelTask(func, args);
 	TaskManager.instance.submit(result);
 	return result;
 }
 
-@trusted auto parallelTask(Func, Args...)(Func func, Args args) if(is(typeof(func(args))) && isSafeTask!Func)
+@trusted auto parallelTask(Func, Args...)(Func func, Args args) nothrow if(is(typeof(func(args))) && isSafeTask!Func)
 {
 	auto result = createParallelTask(func, args);
 	TaskManager.instance.submit(createParallelTask(func, args));
 	return result;
 }
+
+void fireEvent(Func, Args...)(Func func, Args args) if( isFunction!Func || isDelegate!Func )
+{
+	if( func !is null )
+		func(args);
+}
+
+void fireEvent(Func, Args...)(Func[] func, Args args) if( isFunction!Func || isDelegate!Func )
+{
+	foreach(Func f; func)
+	{
+		fireEvent(f, args);
+	}
+}
+
+void fireEvent(Func, Args...)(SetOf!Func func, Args args) if( isFunction!Func || isDelegate!Func )
+{
+	foreach(Func f; func)
+	{
+		fireEvent(f, args);
+	}
+}
+
+/*
+@trusted void fireEvent(Func, Args...)(Func[] func, Args args) if(is(typeof(func(args))) && isSafeTask!Func)
+{
+	foreach(Func f; func)
+	{
+		if( func !is null )
+		{
+			func(args);
+		}
+	}
+}
+*/
 
 private template hasUnsharedAliasing(T...)
 {
@@ -544,4 +862,49 @@ private template isSafeTask(F)
 			(functionAttributes!F & FunctionAttribute.ref_) == 0 &&
 			(isFunctionPointer!F || !hasUnsharedAliasing!F) &&
 			allSatisfy!(noUnsharedAliasing, ParameterTypeTuple!F);
+}
+
+private template hasRawUnsharedAliasing(T...)
+{
+    template Impl(T...)
+    {
+        static if (T.length == 0)
+        {
+            enum Impl = false;
+        }
+        else
+        {
+            static if (is(T[0] foo : U*, U) && !isFunctionPointer!(T[0]))
+                enum has = !is(U == immutable) && !is(U == shared);
+            else static if (is(T[0] foo : U[], U) && !isStaticArray!(T[0]))
+                enum has = !is(U == immutable) && !is(U == shared);
+            else static if (isAssociativeArray!(T[0]))
+                enum has = !is(T[0] == immutable) && !is(T[0] == shared);
+            else
+                enum has = false;
+
+            enum Impl = has || Impl!(T[1 .. $]);
+        }
+    }
+
+    enum hasRawUnsharedAliasing = Impl!(RepresentationTypeTuple!T);
+}
+
+private template hasUnsharedObjects(T...)
+{
+    static if (T.length == 0)
+    {
+        enum hasUnsharedObjects = false;
+    }
+    else static if (is(T[0] == struct))
+    {
+        enum hasUnsharedObjects = hasUnsharedObjects!(
+            RepresentationTypeTuple!(T[0]), T[1 .. $]);
+    }
+    else
+    {
+        enum hasUnsharedObjects = ((is(T[0] == class) || is(T[0] == interface)) &&
+                                !is(T[0] == immutable) && !is(T[0] == shared)) ||
+            hasUnsharedObjects!(T[1 .. $]);
+    }
 }

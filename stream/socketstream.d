@@ -105,13 +105,15 @@ class NonBlockingSocketStream : BlockingSocketStream{
 	@property void delegate(Object sender) onDataNotReady;
 	@property void delegate(Object sender) onStreamNotReady;
 
-	protected void streamNotReady(){
+	protected override void streamNotReady()
+    {
 		auto dg = onDataNotReady;
 		if( dg !is null )
 			dg(this);
 	}
 	
-	protected void dataNotReady(){
+	protected override void dataNotReady()
+    {
 		auto dg = onStreamNotReady;
 		if( dg !is null )
 			dg( this );
