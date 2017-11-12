@@ -1,9 +1,9 @@
 ﻿module denpasar.net.listener;
 
 private import denpasar.base.classes;
+public  import denpasar.core.kernel;
 private import denpasar.net.socketselector;
-public import std.socket;
-public import denpasar.kernel;
+public  import std.socket;
 
 class Listener : Activable {
 	this(ushort portNumber=8080, string ipAddress="", int ipVersion=4)

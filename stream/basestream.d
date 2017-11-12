@@ -1,4 +1,4 @@
-﻿module denpasar.stream;
+﻿module denpasar.stream.basestream;
 
 import std.bitmanip;
 import std.traits;

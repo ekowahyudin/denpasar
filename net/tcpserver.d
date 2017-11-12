@@ -1,7 +1,7 @@
 ﻿module denpasar.net.tcpserver;
 
 import denpasar.base.classes;
-import denpasar.kernel;
+import denpasar.core.kernel;
 import denpasar.utils.set;
 public import denpasar.net.listener;
 import denpasar.utils.array;

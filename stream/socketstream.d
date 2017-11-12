@@ -1,6 +1,6 @@
 ﻿module denpasar.stream.socketstream;
 
-import denpasar.stream;
+import denpasar.stream.basestream;
 
 import std.socket;
 

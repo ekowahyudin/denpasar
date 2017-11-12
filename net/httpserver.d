@@ -1,8 +1,9 @@
 ﻿module denpasar.net.httpserver;
 
-import denpasar.net.tcpserver;
-public import denpasar.net.listener;
-import denpasar.utils.set;
+public  import denpasar.core.kernel;
+private import denpasar.net.tcpserver;
+public  import denpasar.net.listener;
+private import denpasar.utils.set;
 
 enum TalkingProtocol:byte
 {
@@ -105,6 +106,7 @@ class HttpServer : TcpServer!HttpConnection
 {
 	this() 
 	{
+        super();
 		// Constructor code
 	}
 

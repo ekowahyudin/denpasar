@@ -1,6 +1,6 @@
 ﻿module denpasar.base.classes;
 
-import denpasar.kernel;
+import denpasar.core.kernel;
 
 interface Executable{
 	void execute();

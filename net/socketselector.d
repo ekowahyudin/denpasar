@@ -3,7 +3,6 @@
 public import std.datetime;
 public import std.socket;
 import std.stdio;
-import core.atomic;
 import core.sync.mutex;
 import core.sync.condition;
 import core.thread;
@@ -69,7 +68,10 @@ protected:
 
 	void main()
 	{
-		Thread.getThis.priority = Thread.PRIORITY_MIN;
+        Thread thisThread = Thread.getThis;
+		thisThread.priority = Thread.PRIORITY_MIN;
+        thisThread.name = "SocketSelector";
+
 		_socketSet = new SocketSet();
 
 		while(!_isTerminated)
@@ -111,6 +113,10 @@ protected:
 			SocketInfo* socketInfo = _socketInfos[socket];
 			if( socketSet.isSet(socket) )
 			{
+                debug
+                {
+                    writeln("Socket ready");
+                }
 				auto dg = socketInfo.onDataReady;
 				if( dg !is null )
 					dg(socket);
@@ -118,6 +124,10 @@ protected:
 			}
 			else
 			{
+                debug
+                {
+                    writeln("Socket not ready");
+                }
 				long timeoutLimit = socketInfo.timeoutLimit;
 				if( Clock.currStdTime >= timeoutLimit )
 				{
@@ -208,7 +218,6 @@ private:
 		_mutex = new Mutex;
 		_hasSocket = new Condition(_mutex);
 		_thread.start;
-		_thread.name = "SocketSelector";
 	}
 
 	~this()

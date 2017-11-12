@@ -1,6 +1,6 @@
 ﻿module denpasar.stream.filestream;
 
-import denpasar.stream;
+import denpasar.stream.basestream;
 
 import std.file;
 import std.path;
