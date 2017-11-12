@@ -38,11 +38,17 @@ abstract class Task : Executable{
 	}
 	
 	public Status status() @property{
-		return _status;
+        synchronized(this)
+        {
+            return _status;
+        }
 	}
 
 	public void status(Status value) @property{
-		_status = value;
+        synchronized(this)
+        {
+            _status = value;
+        }
 	}
 
 	public Throwable thrownObject() @property{

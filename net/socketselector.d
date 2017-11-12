@@ -1,11 +1,11 @@
 ﻿module denpasar.net.socketselector;
 
-public import std.datetime;
-public import std.socket;
-import std.stdio;
+import denpasar.utils.logger;
 import core.sync.mutex;
 import core.sync.condition;
 import core.thread;
+public import std.datetime;
+public import std.socket;
 
 class SocketSelector {
 
@@ -70,22 +70,26 @@ protected:
 	{
         Thread thisThread = Thread.getThis;
 		thisThread.priority = Thread.PRIORITY_MIN;
-        thisThread.name = "SocketSelector";
 
-		_socketSet = new SocketSet();
+		SocketSet socketSet = _socketSet = new SocketSet();
 
-		while(!_isTerminated)
-		{
-			if( loadSocketsIntoSocketSet )
-			{
-				Socket.select(_socketSet, null, null, dur!"seconds"(1));
-
-				checkSocketEvent;
-
-				_socketSet.reset;
-			}
-		}
-		_socketSet.destroy;
+        try
+        {
+            while(!_isTerminated)
+            {
+                if( loadSocketsIntoSocketSet )
+                {
+                    Socket.select(socketSet, null, null, dur!"seconds"(5));
+                    checkSocketEvent;
+                    socketSet.reset;
+                }
+            }
+        }
+        catch(Throwable t)
+        {
+            logError("Unhandle exception on SocketSelector. System will not receive new connection anymore\n"~t.msg);
+        }
+		socketSet.destroy;
 	}
 
 	bool loadSocketsIntoSocketSet()
@@ -115,20 +119,16 @@ protected:
 			{
                 debug
                 {
-                    writeln("Socket ready");
+                    logDebug("Socket %s Ready", socket.toString);
                 }
-				auto dg = socketInfo.onDataReady;
+                auto dg = socketInfo.onDataReady;
 				if( dg !is null )
 					dg(socket);
 				tobeRemoved ~= socket;
 			}
 			else
 			{
-                debug
-                {
-                    writeln("Socket not ready");
-                }
-				long timeoutLimit = socketInfo.timeoutLimit;
+                long timeoutLimit = socketInfo.timeoutLimit;
 				if( Clock.currStdTime >= timeoutLimit )
 				{
 					auto dg = socketInfo.onTimeout;

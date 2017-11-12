@@ -13,44 +13,47 @@ class Listener : Activable {
 		this.ipVersion = ipVersion;
 	}
 	
-	@property
-	ushort portNumber()
+    ushort portNumber() @property
 	{
 		return _portNumber;
 	}
 	
-	@property
-	void portNumber(ushort value)
+    void portNumber(ushort value) @property
 	{
 		_portNumber = value;
 	}
 	
-	@property
-	string ipAddress()
+    string ipAddress() @property
 	{
 		return _ipAddress;
 	}
 	
-	@property
-	void ipAddress(string value)
+    void ipAddress(string value) @property
 	{
 		_ipAddress = value;
 	}
 	
-	@property
-	int ipVersion()
+    int ipVersion() @property
 	{
 		return _ipVersion;
 	}
 	
-	@property
-	void ipVersion(int value)
+    void ipVersion(int value) @property
 	{
 		_ipVersion = value;
 	}
 
-	@property
-	Socket socket()
+    int backlog() @property
+    {
+        return _backlog;
+    }
+
+    void backlog(int value) @property
+    {
+        _backlog = value;
+    }
+
+    Socket socket() @property
 	{
 		return _socket;
 	}
@@ -86,6 +89,7 @@ protected:
 		socket = new TcpSocket();
 		bind;
 		listen;
+        waitSocketEvent;
 	}
 	
 	override
@@ -108,29 +112,34 @@ protected:
 	
 	void listen()
 	{
-		SocketSelector.instance.onDataReady(socket,
-			delegate(Socket socket) nothrow
-			{
-				Socket peer = null;
-				try
-				{
-					peer = socket.accept;
-					peer.blocking = false;
-					firewallCheck(peer);
-					parallelTask(_onIncommingClient, this, peer);
-				}
-				catch(Throwable e)
-				{
-					if( peer !is null)
-						peer.close;
-				}
-				finally
-				{
-					futureTask(&listen);
-				}
-			}
-		);
+        socket.listen(backlog);
 	}
+
+    void waitSocketEvent()
+    {
+        SocketSelector.instance.onDataReady(socket, &handleIncommingClient);
+    }
+
+    void handleIncommingClient(Socket socket) nothrow
+    {
+        Socket peer = null;
+        try
+        {
+            peer = socket.accept;
+            peer.blocking = false;
+            firewallCheck(peer);
+            futureTask(_onIncommingClient, this, peer);
+        }
+        catch(Throwable e)
+        {
+            if( peer !is null)
+                peer.close;
+        }
+        finally
+        {
+            futureTask(&waitSocketEvent);
+        }
+    }
 
 	/**
 	 * throw exception if connection is rejected
@@ -146,6 +155,7 @@ private:
 	string _ipAddress;
 	int _ipVersion;
 	Socket _socket;
+    int _backlog = 256;
 }
 
 
