@@ -1,9 +1,10 @@
 ﻿module denpasar.net.socketselector;
 
-import denpasar.utils.logger;
 import core.sync.mutex;
 import core.sync.condition;
 import core.thread;
+import denpasar.core.kernel;
+import denpasar.utils.logger;
 public import std.datetime;
 public import std.socket;
 
@@ -131,18 +132,23 @@ protected:
                 long timeoutLimit = socketInfo.timeoutLimit;
 				if( Clock.currStdTime >= timeoutLimit )
 				{
-					auto dg = socketInfo.onTimeout;
-					if( dg !is null )
-						dg(socket);
+                    debug
+                    {
+                        logDebug("Socket %s Timeout", socket.toString);
+                    }
+                    fireEvent(socketInfo.onTimeout, socket);
 					tobeRemoved ~= socket;
-				}
+                }
 			}
 		}
-		foreach(Socket socket; tobeRemoved)
-		{
-			removeNoLock(socket);
-		}
-		_socketInfos.rehash;
+        if( tobeRemoved.length > 0)
+        {
+            foreach(Socket socket; tobeRemoved)
+            {
+                removeNoLock(socket);
+            }
+            _socketInfos.rehash;
+        }
 	}
 
 	void waitEventNoLock(

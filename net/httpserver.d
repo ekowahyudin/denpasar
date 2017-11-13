@@ -133,7 +133,7 @@ class HttpServer : TcpServer!HttpConnection
 
 		context.connection = connection;
 		context.response = new Response();
-		context.request = httpRequestTask.result;
+        context.request = httpRequestTask.workForce;
 
 		auto httpResponseTask = parallelTask(&generateResponse, context);
 

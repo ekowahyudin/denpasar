@@ -9,7 +9,7 @@ import std.meta;
 import std.stdio;
 import std.traits;
 
-abstract class Task : Executable{
+abstract class Task{
 	enum Status:byte{
 		detached,
 		queued,
@@ -47,7 +47,7 @@ abstract class Task : Executable{
 	public void status(Status value) @property{
         synchronized(this)
         {
-            _status = value;
+            statusNoSync = value;
         }
 	}
 
@@ -105,6 +105,15 @@ abstract class Task : Executable{
 
 protected:
 
+    void statusNoSync(Status value) @property
+    {
+        _status = value;
+        if( value == Status.done )
+        {
+            fireFulfilled();
+        }
+    }
+
 	void installEvent(Pool, Callback, Args...)(Pool pool, Callback callback, Args args)
 	{
 		synchronized(this)
@@ -150,40 +159,43 @@ protected:
 		_queueNumber = value;
 	}
 
-	protected void execute()
+	protected void execute(bool useCurrentFiber=false)
 	{
-		auto taskManager = TaskManager.instance;
-		taskManager.detachTask(this);
-		
-		Fiber fiber = _fiber;
-		if( fiber is null )
-		{
-			_fiber = fiber = taskManager.borrowFiber;
-			fiber.reset(&rawExecute);
-		}
-		try
-		{
-			status = Status.executing;
-			fiber.call;
-		}
-		catch(Throwable t)
-		{
-			thrownObject = t;
-		}
-		
-		if( fiber.state == Fiber.State.TERM )
-		{
-			taskManager.recycleFiber(fiber);
-			synchronized(this)
-			{
-				status = Status.done;
-				fireFulfilled();
-			}
-		}
-		else{
-			//submit for next time execution
-			taskManager.submit(this);
-		}
+        if( useCurrentFiber && Fiber.getThis !is null )
+        {
+            rawExecute;
+            status = Status.done;
+        }
+        else
+        {
+            auto taskManager = TaskManager.instance;
+            taskManager.detachTask(this);
+            Fiber fiber = _fiber;
+            if( fiber is null )
+            {
+                _fiber = fiber = taskManager.borrowFiber;
+                fiber.reset(&rawExecute);
+            }
+            try
+            {
+                status = Status.executing;
+                fiber.call;
+            }
+            catch(Throwable t)
+            {
+                thrownObject = t;
+            }
+            
+            if( fiber.state == Fiber.State.TERM )
+            {
+                taskManager.recycleFiber(fiber);
+                status = Status.done;
+            }
+            else{
+                //submit for next time execution
+                taskManager.submit(this);
+            }
+        }
 	}
 
 	abstract void rawExecute();
@@ -221,6 +233,8 @@ protected:
 
 	void fireCallback(Delegates, Args...)(Delegates dgs, Args args)
 	{
+        if( dgs is null || dgs.count )
+            return;
 		if( isParallelTask )
 		{
 			foreach(void delegate(Args) dg; dgs)
@@ -297,7 +311,7 @@ class FuncTask(Result) : Task{
 		bool firstTime = true;
 		while(status != Status.done)
 		{
-			execute;
+			execute(true);
 			if( firstTime ){
 				firstTime = false;
 			}

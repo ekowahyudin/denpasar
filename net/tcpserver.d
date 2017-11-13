@@ -100,7 +100,7 @@ protected:
 
 	void registerConnection(Connection connection)
 	{
-		connections ~= connection;
+        connections ~= connection;
 	}
 
 	void unregisterConnection(Connection connection)

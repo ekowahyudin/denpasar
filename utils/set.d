@@ -6,6 +6,7 @@ class SetOf(T) {
 
 	this() nothrow
 	{
+        _data = null;
 	}
 
 	void opOpAssign(string op)(T item) if( op=="~" )
