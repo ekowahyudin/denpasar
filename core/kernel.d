@@ -37,19 +37,17 @@ abstract class Task{
 		return _id;
 	}
 	
-	public Status status() @property{
-        synchronized(this)
-        {
-            return _status;
-        }
+    public Status status() @property{
+           return _status;
 	}
 
-	public void status(Status value) @property{
-        synchronized(this)
+    public void status(Status value) @property{
+        _status = value;
+        if( value == Status.done )
         {
-            statusNoSync = value;
+            fireFulfilled();
         }
-	}
+    }
 
 	public Throwable thrownObject() @property{
 		return _thrownObject;
@@ -105,15 +103,6 @@ abstract class Task{
 
 protected:
 
-    void statusNoSync(Status value) @property
-    {
-        _status = value;
-        if( value == Status.done )
-        {
-            fireFulfilled();
-        }
-    }
-
 	void installEvent(Pool, Callback, Args...)(Pool pool, Callback callback, Args args)
 	{
 		synchronized(this)
@@ -136,19 +125,22 @@ protected:
 
 	bool invokeOnDone(Func,Args...)(Func func, Args args)
 	{
-		if( status == Status.done )
-		{
-			if( isParallelTask )
-			{
-				parallelTask(func, args);
-			}
-			else
-			{
-				futureTask(func, args);
-			}
-			return true;
-		}
-		return false;
+        synchronized(this)
+        {
+            if( status == Status.done )
+            {
+                if( isParallelTask )
+                {
+                    parallelTask(func, args);
+                }
+                else
+                {
+                    futureTask(func, args);
+                }
+                return true;
+            }
+            return false;
+        }
 	}
 
 	size_t queueNumber() nothrow{
@@ -161,15 +153,38 @@ protected:
 
 	protected void execute(bool useCurrentFiber=false)
 	{
+        synchronized(this)
+        {
+            if( status == Status.executing )
+            {
+                return;
+            }
+            else
+            {
+                status = Status.executing;
+            }
+        }
+
+        auto taskManager = TaskManager.instance;
+        taskManager.detachTask(this);
+
         if( useCurrentFiber && Fiber.getThis !is null )
         {
-            rawExecute;
-            status = Status.done;
+            try
+            {
+                //no try catch! let parent fiber catch this
+                rawExecute;
+            }
+            finally
+            {
+                synchronized(this)
+                {
+                    status = Status.done;
+                }
+            }
         }
         else
         {
-            auto taskManager = TaskManager.instance;
-            taskManager.detachTask(this);
             Fiber fiber = _fiber;
             if( fiber is null )
             {
@@ -178,7 +193,6 @@ protected:
             }
             try
             {
-                status = Status.executing;
                 fiber.call;
             }
             catch(Throwable t)
@@ -189,11 +203,18 @@ protected:
             if( fiber.state == Fiber.State.TERM )
             {
                 taskManager.recycleFiber(fiber);
-                status = Status.done;
+                synchronized(this)
+                {
+                    status = Status.done;
+                }
             }
             else{
                 //submit for next time execution
                 taskManager.submit(this);
+                synchronized(this)
+                {
+                    status = Status.queued;
+                }
             }
         }
 	}
@@ -219,19 +240,19 @@ protected:
 		fireCallback(_onFailureSet,ex);
 	}
 
-	void fireSuccess()
+    void fireSuccess()
 	{
 		fireCallback(_onSuccessThrownSet, this.thrownObject);
 		fireCallback(_onSuccessSet);
 	}
 
-	void fireDone()
+    void fireDone()
 	{
 		fireCallback(_onDoneThrownSet, this.thrownObject);
 		fireCallback(_onDoneSet);
 	}
 
-	void fireCallback(Delegates, Args...)(Delegates dgs, Args args)
+    void fireCallback(Delegates, Args...)(Delegates dgs, Args args)
 	{
         if( dgs is null || dgs.count )
             return;
@@ -262,7 +283,7 @@ private:
 	size_t _queueNumber;
 	sizediff_t _priority = 1;
 	bool _isParallelTask = false;
-	shared Status _status=Status.detached;
+	Status _status=Status.detached;
 	Throwable _thrownObject=null;
 	Task _next;
 	Task _prev;
@@ -308,36 +329,69 @@ class FuncTask(Result) : Task{
 
 	public Result workForce()
 	{
-		bool firstTime = true;
-		while(status != Status.done)
-		{
-			execute(true);
-			if( firstTime ){
-				firstTime = false;
-			}
-			else{
-				TaskManager.instance.runOnce;
-			}
-		}
-		static if( !is(Result==void) )
-		{
-			return result;
-		}
+        while(true)
+        {
+            bool shouldExecute = true;
+            synchronized(this)
+            {
+                Status status = this.status;
+                if( status != Status.done && status != Status.executing)
+                {
+                    TaskManager.instance.detachTask(this);
+                    shouldExecute = true;
+                }
+                else
+                {
+                    static if( !is(Result==void) )
+                    {
+                        return this.result;
+                    }
+                    else
+                    {
+                        return;
+                    }
+                }
+            }
+
+            if( shouldExecute )
+            {
+                execute(true);
+                static if( !is(Result==void) )
+                {
+                    return this.result;
+                }
+                else
+                {
+                    return;
+                }
+            }
+            else
+            {
+                TaskManager.instance.runOnce;
+            }
+        }
 	}
 
 	public Result wait()
 	{
-		while( status != Status.done )
-		{
-			if( TaskManager.instance.runOnce )
-			{
-				execute;
-			}
-		}
-		static if( !is(Result==void) )
-		{
-			return result;
-		}
+        while(true)
+        {
+            synchronized(this)
+            {
+                if( this.status == Status.done )
+                {
+                    static if( !is(Result==void) )
+                    {
+                        return result;
+                    }
+                    else
+                    {
+                        return;
+                    }
+                }
+            }
+            TaskManager.instance.runOnce;
+        }
 	}
 
 	alias onDone = super.onDone;

@@ -47,13 +47,13 @@ interface Readable : Flowable{
 		else{
 			ubyte[T.sizeof] buf;
 			readExact(buf.ptr, T.sizeof);
-			return isLitteEndian ? 
+			return isLittleEndian ? 
 				littleEndianToNative!T(buf) : 
 				bigEndianToNative!T(buf);
 		}
 	}
 
-	T read(T)(void delegate(ref ForeachType!T[] buf) continueLoop ) if( isArray!T || isSomeString!T ){
+    T read(T)(bool delegate(ref ForeachType!T[] buf) continueLoop ) if( isArray!T || isSomeString!T ){
 		alias C = ForeachType!T;
 		C[] buf;
 		while( continueLoop(buf) ){

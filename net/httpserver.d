@@ -3,14 +3,18 @@
 public  import denpasar.core.kernel;
 private import denpasar.net.tcpserver;
 public  import denpasar.net.listener;
+private import denpasar.utils.array;
 private import denpasar.utils.set;
+private import denpasar.utils.strings;
+private import std.uni;
+private import std.string;
 
 enum TalkingProtocol:byte
 {
 	http1_0, http1_1, http2, webSocket
 }
 
-class HttpConnection
+class Connection
 {
 	mixin TcpConnection;
 
@@ -61,7 +65,7 @@ class Context
 		return _response;
 	}
 
-	HttpConnection conection() @property
+	Connection conection() @property
 	{
 		return _connection;
 	}
@@ -76,12 +80,12 @@ class Context
 		_response = value;
 	}
 
-	void connection(HttpConnection value) nothrow @property
+	void connection(Connection value) nothrow @property
 	{
 		_connection = value;
 	}
 
-	HttpConnection connection() nothrow @property
+	Connection connection() nothrow @property
 	{
 		return _connection;
 	}
@@ -89,12 +93,59 @@ class Context
 private:
 	Request _request;
 	Response _response;
-	HttpConnection _connection;
+	Connection _connection;
+}
+
+struct RequestParam
+{
+    string opIndex(string key)
+    {
+        return _data.get(key,"");
+    }
+    
+    void opIndexAssign(string key, string value)
+    {
+        _data[key] = value;
+    }
+
+    void rehash()
+    {
+        _data.rehash;
+    }
+private:
+    string[string] _data;
 }
 
 class Request
 {
-	
+    string commandMethod() @property
+    {
+        return _commandMethod;
+    }
+
+    void commandMethod(string value) @property
+    {
+        _commandMethod = value;
+    }
+
+    string resourcePath() @property
+    {
+        return _resourcePath;
+    }
+
+    void resourcePath(string value) @property
+    {
+        _resourcePath = value;
+    }
+
+    RequestParam param() @property
+    {
+        return _param;
+    }
+private:
+    string _commandMethod;
+    string _resourcePath;
+    RequestParam _param;
 }
 
 class Response
@@ -102,7 +153,7 @@ class Response
 	
 }
 
-class HttpServer : TcpServer!HttpConnection
+class HttpServer : TcpServer!Connection
 {
 	this() 
 	{
@@ -110,29 +161,29 @@ class HttpServer : TcpServer!HttpConnection
 		// Constructor code
 	}
 
+protected:
 	override
-	void executeConnection(HttpConnection connection)
+	void executeConnection(Connection connection)
 	{
 		switch(connection.talkingProtocol)
 		{
 			case TalkingProtocol.http1_0: 
 				goto case;
 			case TalkingProtocol.http1_1:
-				executeHttp1Connection(connection);
+				http1ExecuteConnection(connection);
 				break;
 			default:
 				connection.close;
 		}
 	}
 
-	void executeHttp1Connection(HttpConnection connection)
+	void http1ExecuteConnection(Connection connection)
 	{
-		auto httpRequestTask = parallelTask(&getHttp1Request, connection);
+		auto httpRequestTask = parallelTask(&http1GetRequest, connection);
 		Context context = new Context();
-		connection.registerContext(context);
-
 		context.connection = connection;
 		context.response = new Response();
+        connection.registerContext(context);
         context.request = httpRequestTask.workForce;
 
 		auto httpResponseTask = parallelTask(&generateResponse, context);
@@ -154,18 +205,105 @@ class HttpServer : TcpServer!HttpConnection
 		auto sendResponseTask = parallelTask(&sendResponse, context);
 		sendResponseTask.onDone = delegate void()
 		{
-			HttpConnection connection = context.connection;
+			Connection connection = context.connection;
 			connection.unregisterContext(context);
 		};
 	}
 
 	//@Parallel
-	Request getHttp1Request(HttpConnection connection)
+	Request http1GetRequest(Connection connection)
 	{
 		Request result = new Request();
 
+        http1GetCommandLine(connection, result);
+        //TODO
 		return result;
 	}
+
+    void http1GetCommandLine(Connection connection, Request request)
+    {
+        auto stream = connection.stream;
+        http1GetCommand(stream, request);
+        http1GetResource(stream, request);
+    }
+
+    void http1GetCommand(Stream stream, Request request)
+    {
+        string result;
+        while(true)
+        {
+            char c = stream.read!char;
+            c = cast(char)toUpper(c);
+            if( isWhite(c) )
+                break;
+            result ~= c;
+        }
+        request.commandMethod = result;
+    }
+
+    void http1GetResource(Stream stream, Request request)
+    {
+        bool hasParam = false;
+        char[] buf = stream.read!(char[])(
+            delegate bool(ref char[] currentBuf)
+            {
+                sizediff_t j = currentBuf.length - 1;
+                if( j<0 )
+                    return true;
+
+                char newChar = currentBuf[j];
+                if( newChar == '?' )
+                {
+                    hasParam = true;
+                    goto handleWhiteChar;
+                }
+
+                if( isWhite(newChar) )
+                {
+                handleWhiteChar:
+                    currentBuf.length = j;
+                    return false;
+                }
+                else
+                {
+                    return true;
+                }
+            }
+        );
+
+        request.resourcePath = cast(string)unescapeUrlComponent(buf);
+
+        if( hasParam )
+        {
+            buf = stream.read!(char[])(
+                delegate bool(ref char[] currentBuf)
+                {
+                    sizediff_t j = currentBuf.length - 1;
+                    if( j< 0 )
+                        return true;
+                    char newChar = currentBuf[j];
+                    if( isWhite(newChar) )
+                    {
+                        currentBuf.length = currentBuf.length - 1;
+                        return false;
+                    }
+                    else
+                    {
+                        return true;
+                    }
+                }
+            );
+            char[][] paramsKeyVal = buf.split('&');
+            foreach(char[] paramKeyVal; paramsKeyVal)
+            {
+                char[][] keyAndValue = splitFirst(paramKeyVal,'=');
+                char[] key = unescapeUrlComponent(keyAndValue[0]);
+                char[] val = unescapeUrlComponent(keyAndValue[1]);
+                request.param[cast(string)key] = cast(string)val;
+            }
+            request.param.rehash;
+        }
+    }
 
 	void generateResponse(Context context)
 	{
