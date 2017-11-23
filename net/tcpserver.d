@@ -2,7 +2,7 @@
 
 import denpasar.base.classes;
 import denpasar.core.kernel;
-public import denpasar.stream.basestream;
+public import denpasar.stream.abstractstream;
 public import denpasar.stream.socketstream;
 import denpasar.utils.set;
 public import denpasar.net.listener;
@@ -181,12 +181,12 @@ mixin template TcpConnection()
         stream = value !is null ? new NonBlockingSocketStream(value) : null;
 	}
 
-    Stream stream() @property
+    AbstractStream stream() @property
     {
         return _stream;
     }
 
-    void stream(Stream value) @property
+    void stream(AbstractStream value) @property
     {
         _stream = value;
     }
@@ -217,5 +217,5 @@ private:
 	Object _server;
 	Listener _listener;
 	Socket _socket;
-    Stream _stream;
+    AbstractStream _stream;
 }

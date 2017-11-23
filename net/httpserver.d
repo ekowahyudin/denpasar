@@ -6,6 +6,7 @@ public  import denpasar.net.listener;
 private import denpasar.utils.array;
 private import denpasar.utils.set;
 private import denpasar.utils.strings;
+private import denpasar.utils.logger;
 private import std.uni;
 private import std.string;
 
@@ -142,10 +143,33 @@ class Request
     {
         return _param;
     }
+
+    string talkingProtocol() @property
+    {
+        return _talkingProtocol;
+    }
+
+    void talkingProtocol(string value) @property
+    {
+        _talkingProtocol = value;
+    }
+
+    double protocolVersion() @property
+    {
+        return _protocolVersion;
+    }
+
+    void protocolVersion(double v) @property
+    {
+        _protocolVersion = v;
+    }
+
 private:
+    string _talkingProtocol;
     string _commandMethod;
     string _resourcePath;
     RequestParam _param;
+    double _protocolVersion=1.0;
 }
 
 class Response
@@ -225,24 +249,38 @@ protected:
         auto stream = connection.stream;
         http1GetCommand(stream, request);
         http1GetResource(stream, request);
+        http1GetProtocol(stream, request);
     }
 
-    void http1GetCommand(Stream stream, Request request)
+    void http1GetCommand(AbstractStream stream, Request request)
     {
-        string result;
-        while(true)
+        stream.stripLeft!char;
+        const max = 9;
+        char[max] result;
+        sizediff_t index = -1;
+        while(index<max)
         {
             char c = stream.read!char;
             c = cast(char)toUpper(c);
             if( isWhite(c) )
                 break;
-            result ~= c;
+            result[++index] = c;
         }
-        request.commandMethod = result;
+        ++index;
+        request.commandMethod = cast(string) result[0..index];
+        if( index == max )
+        {
+            throw new RequestException("Invalid command method");
+        }
+        debug
+        {
+            logDebug("request.commandMethod:%s", request.commandMethod);
+        }
     }
 
-    void http1GetResource(Stream stream, Request request)
+    void http1GetResource(AbstractStream stream, Request request)
     {
+        stream.stripLeft!char;
         bool hasParam = false;
         char[] buf = stream.read!(char[])(
             delegate bool(ref char[] currentBuf)
@@ -250,6 +288,8 @@ protected:
                 sizediff_t j = currentBuf.length - 1;
                 if( j<0 )
                     return true;
+                if( j>4096 )
+                    throw new RequestException("Request path too long");
 
                 char newChar = currentBuf[j];
                 if( newChar == '?' )
@@ -272,6 +312,11 @@ protected:
         );
 
         request.resourcePath = cast(string)unescapeUrlComponent(buf);
+        debug
+        {
+            logDebug("request.path: "~request.resourcePath);
+        }
+
 
         if( hasParam )
         {
@@ -281,6 +326,10 @@ protected:
                     sizediff_t j = currentBuf.length - 1;
                     if( j< 0 )
                         return true;
+                    if( j > 16*1024 )
+                    {
+                        throw new RequestException("Request parameter too long");
+                    }
                     char newChar = currentBuf[j];
                     if( isWhite(newChar) )
                     {
@@ -300,9 +349,70 @@ protected:
                 char[] key = unescapeUrlComponent(keyAndValue[0]);
                 char[] val = unescapeUrlComponent(keyAndValue[1]);
                 request.param[cast(string)key] = cast(string)val;
+
+                debug
+                {
+                    logDebug("request.param[%s]=%s", cast(string) key, cast(string) val);
+                }
+
             }
             request.param.rehash;
         }
+
+        stream.stripLeft!char;
+   }
+
+    void http1GetProtocol(AbstractStream stream, Request request)
+    {
+        char[] protocol;
+        while(true)
+        {
+            char c = cast(char) toUpper( stream.read!char );
+            if( c == '/' )
+            {
+                break;
+            }
+            if( protocol.length > 5 )
+            {
+                goto unknowTalkingProtocol;
+            }
+            protocol ~= c;
+        }
+        if( protocol != "HTTP" && protocol != "HTTPS" )
+        {
+        unknowTalkingProtocol:
+            throw new RequestException("Unknow talking protocol");
+        }
+        request.talkingProtocol = cast(string) protocol;
+
+        char majorVersion = stream.read!char;
+        if( majorVersion != '1' )
+        {
+        unsupportProtocolVersion:
+            throw new RequestException("Unsupported protocol version");
+        }
+        char dot = stream.read!char;
+        if( dot != '.' )
+            goto unsupportProtocolVersion;
+        char minorVersion = stream.read!char;
+        switch( minorVersion )
+        {
+            case '0':
+                request.protocolVersion = 1.0;
+                break;
+            case '1':
+                request.protocolVersion = 1.1;
+                break;
+            default:
+                goto unsupportProtocolVersion;
+        }
+
+        debug
+        {
+            logDebug("request.protocol:%s/%f", request.talkingProtocol, request.protocolVersion );
+        }
+
+        stream.readLine!(char[]);
     }
 
 	void generateResponse(Context context)
@@ -322,3 +432,21 @@ protected:
 
 }
 
+class ClientException : Exception
+{
+    this(Connection client, string message, string file=__FILE__, size_t line=__LINE__)
+    {
+        this.client = client;
+        super(message, file, line);
+    }
+
+    Connection client;
+}
+
+class RequestException : ClientException
+{
+    this(string message, string file=__FILE__, size_t line=__LINE__)
+    {
+        super(null, message, file, line);
+    }
+}

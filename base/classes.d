@@ -99,3 +99,5 @@ private:
 		_onBeforeDeactivation, _onDeactivationSuccess;
 	void delegate(Object, Exception)[] _onActivationFailure, _onDeactivationFailure;
 }
+
+alias EventNotify = void delegate(Object sender);

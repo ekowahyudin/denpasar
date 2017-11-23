@@ -1,50 +1,59 @@
 ﻿module denpasar.stream.filestream;
 
-import denpasar.stream.basestream;
+import denpasar.stream.abstractstream;
 
 import std.file;
 import std.path;
 import std.stdio;
 
 enum FileMode{
-	READ,
-	WRITE,
-	CREATE_IF_NOT_EXIST,
-	CREATE_NEW
+	read,
+	write,
+	createIfNotExists,
+	createNew
 }
 
-class FileStream : Stream{
-	mixin FlowableTemplate;
-
-	this(OpenModes...)(string filename, OpenModes modes) {
+class FileStream : AbstractStream
+{
+	this(OpenModes...)(string filename, OpenModes modes) 
+    {
 		bool isRead = false;
 		bool isCreateIfNotExists = false;
 		bool isCreateNew = false;
-		foreach(mode; modes){
-			static if( is(typeof(mode) == FileMode)  ){
-				if( mode == FileMode.READ ){
+		foreach(mode; modes)
+        {
+			static if( is(typeof(mode) == FileMode)  )
+            {
+				if( mode == FileMode.read )
+                {
 					isRead = true;
 				}
-				else if( mode == FileMode.WRITE ){
+				else if( mode == FileMode.write )
+                {
 					isWrite = true;
 				}
-				else if ( mode == FileMode.CREATE_IF_NOT_EXIST ){
+				else if ( mode == FileMode.createIfNotExists )
+                {
 					isCreateIfNotExists = true;
 				}
-				else if( mode == FileMode.CREATE_NEW ){
+				else if( mode == FileMode.createNew )
+                {
 					isCreateNew = true;
 				}
 			}
 		}
 
 		string fileMode;
-		if( isCreateNew ){
+		if( isCreateNew )
+        {
 			fileMode = "w";
 		}
-		else if( isCreateIfNotExists ){
+		else if( isCreateIfNotExists )
+        {
 			fileMode = exists(filename) ? "r" : "w";
 		}
-		if( isWrite ){
+		if( isWrite )
+        {
 			fileMode ~= '+';
 		}
 		fileMode ~= 'b';
@@ -53,67 +62,55 @@ class FileStream : Stream{
 		fileName = filename;
 	}
 
-	~this(){
+	~this()
+    {
 		close;
 	}
 
-	string fileName() @property{
+	public string fileName() @property
+    {
 		return _fileName;
 	}
 
-	protected void fileName(string value) @property{
-		_fileName = value;
-	}
-
-	bool isSeekable() @property{
-		return true;
-	}
-
-	size_t size() @property{
-		return file.size;
-	}
-
-	size_t position() @property{
-		return file.tell;
-	}
-
-	void position(size_t pos) @property{
-		seek(SeekFrom.BEGINING, cast(sizediff_t) pos);
-	}
-
-	size_t seek(SeekFrom from, sizediff_t delta){
-		file.seek(delta, seekFrom(from));
-		return position;
-	}
-
-	void close(){
-		file.close;
-	}
-
-	void clear(){
-		file.reopen(fileName, isForUpdate? "w+b" : "wb");
-	}
-
-	size_t readAny(void* targetPtr, size_t bytes){
-		ubyte* ptr = cast(ubyte*) targetPtr;
-		ubyte[] result = file.rawRead(ptr[0..bytes]);
-		return result.length;
-	}
-
-	size_t writeAny(void* source, size_t bytes){
-		ubyte* ptr = cast(ubyte*) source;
-		file.rawWrite(ptr[0..bytes]);
-		return bytes;
-	}
-
 protected:
-	void dataNotReady(){
-		//reading is failed so data is not ready
-	}
 
-	void streamNotReady(){
-		//writing is failed so stream is not ready
-	}
+    void fileName(string value) @property
+    {
+        _fileName = value;
+    }
+
+    override size_t rawReadAny(void* targetPtr, size_t bytes)
+    {
+        ubyte* ptr = cast(ubyte*) targetPtr;
+        ubyte[] result = file.rawRead(ptr[0..bytes]);
+        return result.length;
+    }
+
+    override size_t rawWriteAny(void* sourcePtr, size_t bytes)
+    {
+        ubyte* ptr = cast(ubyte*) sourcePtr;
+        file.rawWrite(ptr[0..bytes]);
+        return bytes;
+    }
+
+    override size_t rawSeek(SeekFrom from, sizediff_t delta)
+    {
+        if( from!=SeekFrom.currentPosition || delta!=0 ) 
+        {
+            file.seek(delta, seekFrom(from));
+        }
+        return file.tell;
+    }
+
+    override void rawClose()
+    {
+        file.close;
+    }
+
+    override void rawClear()
+    {
+        file.reopen(fileName, isForUpdate? "w+b" : "wb");
+    }
 
 private:
 	bool isForUpdate = false;
@@ -122,11 +119,11 @@ private:
 
 	pure int seekFrom(SeekFrom from){
 		switch(from){
-			case SeekFrom.END:
+			case SeekFrom.end:
 				return SEEK_END;
-			case SeekFrom.CURRENT:
+			case SeekFrom.currentPosition:
 				return SEEK_CUR;
-			case SeekFrom.BEGINING:
+			case SeekFrom.begining:
 			default:
 				return SEEK_SET;
 		}
