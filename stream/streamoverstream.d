@@ -1,6 +1,6 @@
 ﻿module denpasar.stream.streamoverstream;
 
-import denpasar.stream.basestream;
+import denpasar.stream.abstractstream;
 
 class StreamOverStream : AbstractStream
 {

@@ -48,7 +48,7 @@ protected:
         return received;
     }
     
-    override size_t rawWriteAny(void* sourcePtr, size_t bytes)
+    override size_t rawWriteAny(immutable void* sourcePtr, size_t bytes)
     {
         Socket socket = this.socket;
         ubyte* ubytePtr = cast(ubyte*) sourcePtr;

@@ -389,12 +389,12 @@ public:
     /**
      * write any bytes from buffer into low level stream
      */
-    size_t writeAny(void *sourcePtr, size_t bytes)
+    size_t writeAny(immutable void *sourcePtr, size_t bytes)
     {
         return rawWriteAny(sourcePtr, bytes);
     }
 
-    public void writeExact(void* sourcePtr, size_t bytes)
+    public void writeExact(immutable void* sourcePtr, size_t bytes)
     {
         if( bytes == 0 )
             return;
@@ -492,7 +492,7 @@ protected:
     }
 
     abstract size_t rawReadAny(void* targetPtr, size_t bytes);
-    abstract size_t rawWriteAny(void* sourcePtr, size_t bytes);
+    abstract size_t rawWriteAny(immutable void* sourcePtr, size_t bytes);
     abstract size_t rawSeek(SeekFrom from, sizediff_t delta);
     abstract void rawClose();
     abstract void rawClear();

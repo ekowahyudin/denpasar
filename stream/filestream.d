@@ -86,7 +86,7 @@ protected:
         return result.length;
     }
 
-    override size_t rawWriteAny(void* sourcePtr, size_t bytes)
+    override size_t rawWriteAny(immutable void* sourcePtr, size_t bytes)
     {
         ubyte* ptr = cast(ubyte*) sourcePtr;
         file.rawWrite(ptr[0..bytes]);
