@@ -1,14 +1,17 @@
 ﻿module denpasar.net.httpserver;
 
 public  import denpasar.core.kernel;
-private import denpasar.net.tcpserver;
 public  import denpasar.net.listener;
+private import denpasar.net.tcpserver;
+private import denpasar.stream.memorystream;
 private import denpasar.utils.array;
+private import denpasar.utils.logger;
 private import denpasar.utils.set;
 private import denpasar.utils.strings;
-private import denpasar.utils.logger;
-private import std.uni;
+private import std.conv;
 private import std.string;
+private import std.traits;
+private import std.uni;
 
 enum TalkingProtocol:byte
 {
@@ -144,6 +147,11 @@ class Request
         return _param;
     }
 
+    RequestParam header() @property
+    {
+        return _header;
+    }
+
     string talkingProtocol() @property
     {
         return _talkingProtocol;
@@ -164,17 +172,76 @@ class Request
         _protocolVersion = v;
     }
 
+    ushort targetPort() @property
+    {
+        return _targetPort;
+    }
+
+    void targetPort(ushort value) @property
+    {
+        _targetPort = value;
+    }
+
+    string targetHost() @property
+    {
+        return _targetHost;
+    }
+
+    void targetHost(string value) @property
+    {
+        _targetHost = value;
+    }
 private:
+    ushort _targetPort = 80;
+    string _targetHost;
     string _talkingProtocol;
     string _commandMethod;
     string _resourcePath;
     RequestParam _param;
+    RequestParam _header;
     double _protocolVersion=1.0;
 }
 
 class Response
 {
-	
+    void opAssign(S)(S s) if( isSomeString!S )
+    {
+        auto resultStream = new MemoryStream();
+        resultStream.write(s);
+        contentBody = resultStream;
+    }
+
+    void opOpAssign(string op, S)(S s) if( op=="~" && isSomeString!S )
+    {
+        auto current = this.contentBody;
+        if( current is null )
+        {
+            opAssign(s);
+        }
+        else
+        {
+            StreamOverStream sos = cast(StreamOverStream) current;
+            if( sos is null )
+            {
+                sos = new StreamOverStream(current);
+                contentBody = sos;
+            }
+            sos ~= s;
+        }
+    }
+
+    @property IReadableStream contentBody()
+    {
+        return _contentBody;
+    }
+
+    @property void contentBody(IReadableStream value)
+    {
+        _contentBody = value;
+    }
+
+private:
+    IReadableStream _contentBody = null;
 }
 
 class HttpServer : TcpServer!Connection
@@ -210,214 +277,230 @@ protected:
         connection.registerContext(context);
         context.request = httpRequestTask.workForce;
 
-		auto httpResponseTask = parallelTask(&generateResponse, context);
+        try
+        {
+            generateResponse(context);
+        }
+        catch(Throwable t)
+        {
+            generateFailureContent(context, t);
+        }
 
-		httpResponseTask.onSuccess = delegate void()
-		{
-			sendResponseTask(context);
-		};
-
-		httpResponseTask.onFailure = delegate void(Exception e)
-		{
-			generateFailureContent(context, e);
-			sendResponseTask(context);
-		};
-	}
-
-	protected void sendResponseTask(Context context)
-	{
-		auto sendResponseTask = parallelTask(&sendResponse, context);
-		sendResponseTask.onDone = delegate void()
-		{
-			Connection connection = context.connection;
-			connection.unregisterContext(context);
-		};
-	}
+        try
+        {
+            sendResponse(context);
+        }
+        catch(Throwable t)
+        {
+            logError("Failed to send response: %s",t.msg);
+        }
+        connection.unregisterContext(context);
+    }
 
 	//@Parallel
 	Request http1GetRequest(Connection connection)
 	{
 		Request result = new Request();
 
-        http1GetCommandLine(connection, result);
-        //TODO
+        http1ExtractCommandLine(connection, result);
+        http1ExtractHeader(connection, result);
 		return result;
 	}
 
-    void http1GetCommandLine(Connection connection, Request request)
+    void http1ExtractHeader(Connection connection, Request result)
     {
+        debug
+        {
+            string debugLine;
+        }
         auto stream = connection.stream;
-        http1GetCommand(stream, request);
-        http1GetResource(stream, request);
-        http1GetProtocol(stream, request);
-    }
-
-    void http1GetCommand(AbstractStream stream, Request request)
-    {
-        stream.stripLeft!char;
-        const max = 9;
-        char[max] result;
-        sizediff_t index = -1;
-        while(index<max)
-        {
-            char c = stream.read!char;
-            c = cast(char)toUpper(c);
-            if( isWhite(c) )
-                break;
-            result[++index] = c;
-        }
-        ++index;
-        request.commandMethod = cast(string) result[0..index];
-        if( index == max )
-        {
-            throw new RequestException("Invalid command method");
-        }
-        debug
-        {
-            logDebug("request.commandMethod:%s", request.commandMethod);
-        }
-    }
-
-    void http1GetResource(AbstractStream stream, Request request)
-    {
-        stream.stripLeft!char;
-        bool hasParam = false;
-        char[] buf = stream.read!(char[])(
-            delegate bool(ref char[] currentBuf)
-            {
-                sizediff_t j = currentBuf.length - 1;
-                if( j<0 )
-                    return true;
-                if( j>4096 )
-                    throw new RequestException("Request path too long");
-
-                char newChar = currentBuf[j];
-                if( newChar == '?' )
-                {
-                    hasParam = true;
-                    goto handleWhiteChar;
-                }
-
-                if( isWhite(newChar) )
-                {
-                handleWhiteChar:
-                    currentBuf.length = j;
-                    return false;
-                }
-                else
-                {
-                    return true;
-                }
-            }
-        );
-
-        request.resourcePath = cast(string)unescapeUrlComponent(buf);
-        debug
-        {
-            logDebug("request.path: "~request.resourcePath);
-        }
-
-
-        if( hasParam )
-        {
-            buf = stream.read!(char[])(
-                delegate bool(ref char[] currentBuf)
-                {
-                    sizediff_t j = currentBuf.length - 1;
-                    if( j< 0 )
-                        return true;
-                    if( j > 16*1024 )
-                    {
-                        throw new RequestException("Request parameter too long");
-                    }
-                    char newChar = currentBuf[j];
-                    if( isWhite(newChar) )
-                    {
-                        currentBuf.length = currentBuf.length - 1;
-                        return false;
-                    }
-                    else
-                    {
-                        return true;
-                    }
-                }
-            );
-            char[][] paramsKeyVal = buf.split('&');
-            foreach(char[] paramKeyVal; paramsKeyVal)
-            {
-                char[][] keyAndValue = splitFirst(paramKeyVal,'=');
-                char[] key = unescapeUrlComponent(keyAndValue[0]);
-                char[] val = unescapeUrlComponent(keyAndValue[1]);
-                request.param[cast(string)key] = cast(string)val;
-
-                debug
-                {
-                    logDebug("request.param[%s]=%s", cast(string) key, cast(string) val);
-                }
-
-            }
-            request.param.rehash;
-        }
-
-        stream.stripLeft!char;
-   }
-
-    void http1GetProtocol(AbstractStream stream, Request request)
-    {
-        char[] protocol;
         while(true)
         {
-            char c = cast(char) toUpper( stream.read!char );
-            if( c == '/' )
+            char[] line = stream.readLine!(char[])(4096);
+            if( line.length == 0 )
             {
                 break;
             }
-            if( protocol.length > 5 )
+            sizediff_t colonPos = line.indexOf(':');
+            if( colonPos < 0 )
             {
-                goto unknowTalkingProtocol;
+                throw new RequestException("Invalid request header. " ~ cast(string)line );
             }
-            protocol ~= c;
+            else
+            {
+                char[] dirtyKey = strip( line[0..colonPos] );
+                toLowerInPlace( dirtyKey );
+                char[] dirtyVal = strip( line[colonPos+1..$] );
+
+                if( dirtyKey == "host" )
+                {
+                    sizediff_t portSeparator = dirtyVal.indexOf(':');
+                    if( portSeparator > 0 )
+                    {
+                        char[] portString = dirtyVal[portSeparator+1..$];
+                        try
+                        {
+                            ushort port = to!ushort(portString);
+                            result.targetPort = port;
+                            debug
+                            {
+                                debugLine ~= format("\n   port: %d", port);
+                            }
+                        }
+                        catch(Throwable t)
+                        {
+                            throw new RequestException("Invalid port value on host");
+                        }
+                        dirtyVal = dirtyVal[0..portSeparator];
+                    }
+                }
+
+                string key = cast(string) dirtyKey;
+                string val = cast(string) dirtyVal;
+                result.header[key] = val;
+                debug
+                {
+                    debugLine ~= format("\n   %s: %s", key, val);
+                }
+            }
         }
-        if( protocol != "HTTP" && protocol != "HTTPS" )
+        debug
         {
-        unknowTalkingProtocol:
-            throw new RequestException("Unknow talking protocol");
+            logDebug(debugLine);
         }
+    }
+
+    void http1ExtractCommandLine(Connection connection, Request request)
+    {
+        auto stream = connection.stream;
+        char[] line = stream.readLine!(char[])(65536);
+
+        extractTalkingProtocol(line, request);
+        extractCommandMethod(line, request);
+        extractRequestUri(line, request);
+    }
+
+    void extractRequestUri(ref char[] line, Request request)
+    {
+        line = line.strip;
+        sizediff_t questionPos = line.indexOf('?');
+        if( questionPos >= 0 )
+        {
+            char[] params = line[questionPos+1 .. $];
+            extractRequestParam(params, request);
+            line = line[0..questionPos];
+        }
+        request.resourcePath = cast(string) unescapeUrlComponent(line);
+    }
+
+    void extractRequestParam(char[] line, Request request)
+    {
+        debug
+        {
+            string debugLine = "";
+        }
+        char[][] keyValues = line.split('&');
+        foreach(char[] keyValue; keyValues)
+        {
+            string key, value;
+
+            sizediff_t equalPos = keyValue.indexOf('=');
+            if( equalPos > 0 )
+            {
+                char[] escapedKey = keyValue[0..equalPos];
+                char[] escapedValue = keyValue[equalPos+1..$];
+                key = cast(string) escapedKey.unescapeUrlComponent;
+                value = cast(string) escapedValue.unescapeUrlComponent;
+            }
+            else
+            {
+                key = cast(string) keyValue.unescapeUrlComponent;
+            }
+            debug
+            {
+                debugLine ~= format("\n    %s:%s", key,value);
+            }
+            request.param[key] = value;
+        }
+        request.param.rehash;
+        debug
+        {
+            logDebug(debugLine);
+        }
+    }
+
+    void unknownTalkingProtocol()
+    {
+        throw new RequestException("Unknown talking protocol");
+    }
+
+    void extractCommandMethod(ref char[] line, Request request)
+    {
+        line = line.stripLeft;
+        sizediff_t index = line.indexOf(' ');
+        if( index < 0 )
+        {
+            unknownTalkingProtocol;
+        }
+
+        char[] commandMethod = line[0..index];
+        toUpperInPlace(commandMethod);
+
+        request.commandMethod = cast(string) commandMethod;
+        line = line[index+1..$];
+    }
+
+
+    void extractTalkingProtocol(ref char[] line, Request request)
+    {
+        line = line.stripRight;
+        sizediff_t index = lastIndexOf(line, ' ');
+        if( index < 0 )
+        {
+            unknownTalkingProtocol;
+        }
+        
+        char[] protocol = line[index+1..$];
+        line = line[0..index];
+        index = indexOf(line, '/');
+        if( index < 0 )
+        {
+            unknownTalkingProtocol;
+        }
+        
+        char[] protocolVersion = protocol[index+1..$];
+        protocol = protocol[0..index];
+        toUpperInPlace(protocol);
+        
+        if(protocol!="HTTP" && protocol!="HTTPS")
+        {
+            unknownTalkingProtocol;
+        }
+
         request.talkingProtocol = cast(string) protocol;
 
-        char majorVersion = stream.read!char;
-        if( majorVersion != '1' )
+        switch( protocolVersion )
         {
-        unsupportProtocolVersion:
-            throw new RequestException("Unsupported protocol version");
-        }
-        char dot = stream.read!char;
-        if( dot != '.' )
-            goto unsupportProtocolVersion;
-        char minorVersion = stream.read!char;
-        switch( minorVersion )
-        {
-            case '0':
+            case "1.0":
                 request.protocolVersion = 1.0;
                 break;
-            case '1':
+            case "1.1":
                 request.protocolVersion = 1.1;
                 break;
             default:
-                goto unsupportProtocolVersion;
+                if( protocolVersion.startsWith("1.") ){
+                    request.protocolVersion = 1.1;
+                    break;
+                }
+                unknownTalkingProtocol;
         }
-
-        debug
-        {
-            logDebug("request.protocol:%s/%f", request.talkingProtocol, request.protocolVersion );
-        }
-
-        stream.readLine!(char[]);
     }
+
 
 	void generateResponse(Context context)
 	{
-
+        Response response = context.response;
+        response = "hi? my name is eko wahyudin";
 	}
 
 	void generateFailureContent(Context context, Throwable t) nothrow
@@ -429,7 +512,6 @@ protected:
 	{
 
 	}
-
 }
 
 class ClientException : Exception

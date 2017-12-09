@@ -2,17 +2,33 @@
 
 import denpasar.core.kernel;
 
+/**
+ * interface of executeble class
+ */
 interface Executable{
-	void execute();
+
+	/**
+	 * execute class
+	 */
+	public void execute();
 }
 
+/**
+ * Base class of activable class
+ */
 abstract class Activable
 {
+    /**
+	 * get state of class
+	 */
 	@property bool isActive()
 	{
 		return _isActive;
 	}
 
+    /**
+	 * toggle active state of class
+	 */
 	@property void isActive(bool value)
 	{
 		if( isActive == value )
@@ -29,6 +45,7 @@ abstract class Activable
 		else
 			deactivate;
 	}
+
 protected:
 	void activate()
 	{

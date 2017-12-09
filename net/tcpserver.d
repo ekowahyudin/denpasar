@@ -49,7 +49,7 @@ class TcpServer(Connection) : Activable
 		return _listeners;
 	}
 
-	SetOf!Connection connections() @property
+	ThreadSaveSetOf!Connection connections() @property
 	{
 		return _connections;
 	}
@@ -136,7 +136,7 @@ protected:
 
 private:
 	SetOf!Listener _listeners;
-	SetOf!Connection _connections;
+	ThreadSaveSetOf!Connection _connections;
 	void delegate(Connection)[] _onIncommingConnection, _onConnectionClossed, _onExecuteConnection;
 }
 

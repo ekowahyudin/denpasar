@@ -35,11 +35,9 @@ S unescapeUrlComponent(S)(S input) if( isArray!S && isSomeChar!(ForeachType!S) )
                         hexIndex = 0;
                         escape = false;
                     }
+                    break;
                 }
-                else
-                {
-                    target++;
-                }
+                input[target++] = c;
         }
     }
     return input[0..target];

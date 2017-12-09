@@ -2,21 +2,27 @@
 
 import std.traits;
 
-class SetOf(T) {
+private interface Appendable(T)
+{
+    void opOpAssign(string op)(T item) if( op=="~" )
+    {
+        put(item);
+    }
+    
+    void opOpAssign(string op)(T item) if( op=="-" )
+    {
+        remove(item);
+    }
 
-	this() nothrow
+    void put(T item);
+    void remove(T item);
+}
+
+class SetOf(T) : Appendable!T
+{
+	this()
 	{
         _data = null;
-	}
-
-	void opOpAssign(string op)(T item) if( op=="~" )
-	{
-		put(item);
-	}
-
-	void opOpAssign(string op)(T item) if( op=="-" )
-	{
-		remove(item);
 	}
 
 	int opApply(int delegate(ref T item) dg)
@@ -103,9 +109,9 @@ protected:
 	}
 }
 
-class ThreadSaveSetOf(T) : SetOf!T
+class ThreadSaveSetOf(T) : SetOf!T, Appendable!T
 {
-	this() nothrow
+	this()
 	{
 		super();
 	}
@@ -157,4 +163,16 @@ class ThreadSaveSetOf(T) : SetOf!T
 			return super.pop(index); 
 		}
 	}
+}
+
+unittest {
+    class MyClass{
+
+    }
+
+    SetOf!MyClass myClasses = new SetOf!MyClass;
+    myClasses ~= new MyClass;
+
+    SetOf!MyClass myThreadSaveClasses = new ThreadSaveSetOf!MyClass;
+    myThreadSaveClasses ~= new MyClass;
 }

@@ -209,10 +209,10 @@ interface IReadableStream : IBaseStream
 interface IWritableStream : IBaseStream
 {
     public void onWaitForDataReady(EventNotify) @property;
-    public size_t writeAny(void* sourcePtr, size_t bytes);
-    public void writeExact(void* sourcePtr, size_t bytes);
+    public size_t writeAny(immutable void* sourcePtr, size_t bytes);
+    public void writeExact(immutable void* sourcePtr, size_t bytes);
 
-    public void write(T)(T data) if( isNumeric!T || isSomeChar!C )
+    public void write(T)(T data) if( isNumeric!T || isSomeChar!T )
     {
         if( T.sizeof == 1 || isSameEndian )
         {
@@ -221,7 +221,7 @@ interface IWritableStream : IBaseStream
         else
         {
             ubyte[T.sizeof] temp = isLittleEndian? nativeToLittleEndian(data) : nativeToBigEndian(data);
-            writeExact(data.ptr, T.sizeof);
+            writeExact(&data, T.sizeof);
         }
     }
 

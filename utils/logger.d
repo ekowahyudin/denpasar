@@ -7,6 +7,8 @@ import std.string;
 void log(string severity)(string s)
 {
     string timestamp = Clock.currTime(UTC()).toISOString;
+    timestamp = timestamp[9..$];
+    timestamp.length = 13;
     string output = format("%-20s %-10s %s", timestamp, severity, s);
     writeln(output);
 }

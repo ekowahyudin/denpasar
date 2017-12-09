@@ -1,6 +1,6 @@
 ﻿module denpasar.stream.memorystream;
 
-import denpasar.stream.abstractstream;
+public import denpasar.stream.abstractstream;
 
 import std.algorithm;
 
