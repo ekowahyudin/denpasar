@@ -4,24 +4,46 @@ import std.datetime;
 import std.stdio;
 import std.string;
 
-void log(string severity)(string s)
+void log(string severity)(string s) nothrow
 {
-    string timestamp = Clock.currTime(UTC()).toISOString;
-    timestamp = timestamp[9..$];
-    timestamp.length = 13;
-    string output = format("%-20s %-10s %s", timestamp, severity, s);
-    writeln(output);
-}
-
-void logDebug(Args...)(string s, Args args)
-{
-    debug
+    try
     {
-        log!"debug"(format(s, args));
+        string timestamp = Clock.currTime(UTC()).toISOString;
+        timestamp = timestamp[9..$];
+        timestamp.length = 13;
+        string output = format("%-20s %-10s %s", timestamp, severity, s);
+        writeln(output);
+    }
+    catch(Throwable t)
+    {
+
     }
 }
 
-void logError(Args...)(string s, Args args)
+void logDebug(Args...)(string s, Args args) nothrow
 {
-    log!"error"(format(s, args));
+    debug
+    {
+        try
+        {
+            log!"debug"(format(s, args));
+        }
+        catch(Throwable t)
+        {
+
+        }
+
+    }
+}
+
+void logError(Args...)(string s, Args args) nothrow
+{
+    try
+    {
+        log!"error"(format(s, args));
+    }
+    catch(Throwable t)
+    {
+
+    }
 }

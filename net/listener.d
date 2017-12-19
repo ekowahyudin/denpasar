@@ -112,6 +112,7 @@ protected:
 	
 	void listen()
 	{
+        socket.blocking = false;
         socket.listen(backlog);
 	}
 
@@ -128,7 +129,7 @@ protected:
             peer = socket.accept;
             peer.blocking = false;
             firewallCheck(peer);
-            futureTask(_onIncommingClient, this, peer);
+            futureTask("onIncommingClient", _onIncommingClient, this, peer);
         }
         catch(Throwable e)
         {
@@ -137,7 +138,7 @@ protected:
         }
         finally
         {
-            futureTask(&waitSocketEvent);
+            futureTask("waitSocketEvent",&waitSocketEvent);
         }
     }
 

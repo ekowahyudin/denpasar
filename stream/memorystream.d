@@ -4,7 +4,7 @@ public import denpasar.stream.abstractstream;
 
 import std.algorithm;
 
-class MemoryStream : AbstractStream
+class MemoryStream : Stream
 {
 
 	~this()
@@ -40,7 +40,7 @@ protected:
         return newPos;
 	}
 
-    override size_t rawReadAny(void* targetPtr, size_t bytes)
+    override size_t rawGetAny(void* targetPtr, size_t bytes)
     {
         size_t pos = _position;
         size_t bytesAvailable = _data.length - pos;
@@ -55,7 +55,7 @@ protected:
         return copySize;
     }
     
-    override size_t rawWriteAny(immutable void* sourcePtr, size_t bytes)
+    override size_t rawPutAny(immutable void* sourcePtr, size_t bytes)
     {
         auto result = bytes;
         ubyte* uPtr = cast(ubyte*) sourcePtr;

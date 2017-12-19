@@ -191,6 +191,14 @@ class Request
     {
         _targetHost = value;
     }
+
+    bool isAjax()
+    {
+        //TODO need unit test Request.isAjax
+        string magicString = header["http_x_requested_with"];
+        return ( magicString.length > 0 && toLower(magicString)=="xmlhttprequest");
+    }
+
 private:
     ushort _targetPort = 80;
     string _targetHost;
@@ -204,44 +212,110 @@ private:
 
 class Response
 {
+    static enum ContentType:string
+    {
+        text = "text/plain",
+        html = "text/html",
+        json = "application/json",
+        javascript = "application/javascript"
+    }
+
+    static enum Status:int
+    {
+        ok = 200,
+        badRequest = 400,
+        notFound = 404,
+        internalServerError = 500
+    }
+
     void opAssign(S)(S s) if( isSomeString!S )
     {
         auto resultStream = new MemoryStream();
-        resultStream.write(s);
-        contentBody = resultStream;
+        resultStream.put(s);
+        contentStream = resultStream;
     }
 
     void opOpAssign(string op, S)(S s) if( op=="~" && isSomeString!S )
     {
-        auto current = this.contentBody;
+        auto current = this.contentStream;
         if( current is null )
         {
             opAssign(s);
         }
         else
         {
-            StreamOverStream sos = cast(StreamOverStream) current;
-            if( sos is null )
-            {
-                sos = new StreamOverStream(current);
-                contentBody = sos;
-            }
-            sos ~= s;
+            contentStream ~= s;
         }
     }
 
-    @property IReadableStream contentBody()
+    @property IReceivableStream contentStream()
     {
-        return _contentBody;
+        return _contentStream;
     }
 
-    @property void contentBody(IReadableStream value)
+    @property void contentStream(IReceivableStream value)
     {
-        _contentBody = value;
+        _contentStream = value;
+    }
+
+    @property ContentType contentType()
+    {
+        return _contentType;
+    }
+
+    @property void contentType(ContentType value)
+    {
+        _contentType = value;
+    }
+
+    @property Status status()
+    {
+        return _status;
+    }
+
+    @property void status(Status value)
+    {
+        _status = value;
+    }
+
+    @property string statusMessage()
+    {
+        string result = _statusMessage;
+        if(result.length == 0)
+        {
+            return defaultStatusMessage(status);
+        }
+        return result;
+    }
+
+    @property void statusMessage(string value)
+    {
+        _statusMessage = value;
+    }
+
+protected:
+    string defaultStatusMessage(Status status)
+    {
+        switch(status)
+        {
+            case Status.ok:
+                return "OK";
+            case Status.badRequest:
+                return "Bad Request";
+            case Status.notFound:
+                return "Not Found";
+            case Status.internalServerError:
+                return "Internal Server Error";
+            default:
+                return "Unknown status";
+        }
     }
 
 private:
-    IReadableStream _contentBody = null;
+    IReceivableStream _contentStream = null;
+    ContentType _contentType=ContentType.html;
+    Status _status = Status.ok;
+    string _statusMessage = "";
 }
 
 class HttpServer : TcpServer!Connection
@@ -270,7 +344,7 @@ protected:
 
 	void http1ExecuteConnection(Connection connection)
 	{
-		auto httpRequestTask = parallelTask(&http1GetRequest, connection);
+		auto httpRequestTask = parallelTask("http1GetRequest", &http1GetRequest, connection);
 		Context context = new Context();
 		context.connection = connection;
 		context.response = new Response();
@@ -295,6 +369,7 @@ protected:
             logError("Failed to send response: %s",t.msg);
         }
         connection.unregisterContext(context);
+        //auditConnection(connection);
     }
 
 	//@Parallel
@@ -316,7 +391,7 @@ protected:
         auto stream = connection.stream;
         while(true)
         {
-            char[] line = stream.readLine!(char[])(4096);
+            char[] line = stream.getLine!(char[])(4096);
             if( line.length == 0 )
             {
                 break;
@@ -373,7 +448,7 @@ protected:
     void http1ExtractCommandLine(Connection connection, Request request)
     {
         auto stream = connection.stream;
-        char[] line = stream.readLine!(char[])(65536);
+        char[] line = stream.getLine!(char[])(65536);
 
         extractTalkingProtocol(line, request);
         extractCommandMethod(line, request);
@@ -505,12 +580,46 @@ protected:
 
 	void generateFailureContent(Context context, Throwable t) nothrow
 	{
-		
+        Request request = context.request;
+        Response response = context.response;
+        response.statusCode = Response.Status.internalServerError;
+        const string exceptionStr = "Exception";
+
+        if( request.isAjax )
+        {
+            response = format(jsonErrorTemplate, 500, exceptionStr, Escape.json(t.msg));
+            response.contentType = Response.ContentType.json;
+        }
+        else
+        {
+            response = format(htmlErrorTemplate, exceptionStr, Escape.html(t.msg) );
+            response.contentType = Response.ContentType.html;
+        }
 	}
 
 	void sendResponse(Context context)
 	{
+        Response response = context.response;
+        IReceivableStream contentStream = response.contentStream;
+        IHasSize contentStreamSize = cast(IHasSize) contentStream;
+        Stream stream = context.connection.stream();
+        with( stream )
+        {
+            put("HTTP/1.1 %d %s\r\n", response.status, response.statusMessage);
+            if( contentStreamSize !is null )
+            {
+                put("Content-Length: %d\r\n", contentStreamSize.size);
+            }
+            else
+            {
+                //TODO chunk transfer mode
+            }
 
+            put("Content-Type: %s\r\n", response.contentType);
+            put("Connection: close\r\n");
+            put("\r\n");
+            put(contentStream);
+        }
 	}
 }
 
@@ -532,3 +641,6 @@ class RequestException : ClientException
         super(null, message, file, line);
     }
 }
+
+const string jsonErrorTemplate = `{"error":%d,"title":"%s",message:"%s"}`;
+const string htmlErrorTemplate = `<html><head><title>%s</title><body>%s</body></html>`;

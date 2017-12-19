@@ -181,12 +181,12 @@ mixin template TcpConnection()
         stream = value !is null ? new NonBlockingSocketStream(value) : null;
 	}
 
-    AbstractStream stream() @property
+    Stream stream() @property
     {
         return _stream;
     }
 
-    void stream(AbstractStream value) @property
+    void stream(Stream value) @property
     {
         _stream = value;
     }
@@ -217,5 +217,5 @@ private:
 	Object _server;
 	Listener _listener;
 	Socket _socket;
-    AbstractStream _stream;
+    Stream _stream;
 }

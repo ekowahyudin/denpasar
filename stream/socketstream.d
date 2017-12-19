@@ -6,7 +6,7 @@ import denpasar.core.kernel;
 
 import std.socket;
 
-class SocketStream : AbstractStream
+class SocketStream : Stream
 {
     this(Socket socket){
         _socket = socket;
@@ -39,7 +39,7 @@ protected:
         return 0;
     }
     
-    override size_t rawReadAny(void* targetPtr, size_t bytes)
+    override size_t rawGetAny(void* targetPtr, size_t bytes)
     {
         Socket socket = this.socket;
         ubyte* ubytePtr = cast(ubyte*) targetPtr;
@@ -48,7 +48,7 @@ protected:
         return received;
     }
     
-    override size_t rawWriteAny(immutable void* sourcePtr, size_t bytes)
+    override size_t rawPutAny(immutable void* sourcePtr, size_t bytes)
     {
         Socket socket = this.socket;
         ubyte* ubytePtr = cast(ubyte*) sourcePtr;
@@ -94,46 +94,18 @@ private:
     Socket _socket;
 }
 
-class BlockingSocketStream : SocketStream{
-
-	this(Socket socket){
+class BlockingSocketStream : SocketStream
+{
+	this(Socket socket)
+    {
         super(socket);
 	}
 }
 
-class NonBlockingSocketStream : SocketStream{
-	this(Socket socket){
+class NonBlockingSocketStream : SocketStream
+{
+	this(Socket socket)
+    {
 		super(socket);
-        _onStreamNotReady = new SetOf!(void delegate(Object));
-        _onDataNotReady = new SetOf!(void delegate(Object));
 	}
-
-	@property void onDataNotReady(void delegate(Object sender) callback)
-    {
-        _onDataNotReady ~= callback;
-    }
-
-    @property void onStreamNotReady(void  delegate(Object sender) callback)
-    {
-        _onStreamNotReady ~= callback;
-    }
-
-    /**
-     * write operation and stream is not ready
-     */
-	protected override void streamNotReady()
-    {
-        fireEvent(_onStreamNotReady, this);
-	}
-	
-    /**
-     * read operation and data is not ready
-     */
-	protected override void dataNotReady()
-    {
-        fireEvent(_onDataNotReady, this);
-	}
-private:
-    SetOf!(void delegate(Object sender)) _onStreamNotReady;
-    SetOf!(void delegate(Object sender)) _onDataNotReady;
 }

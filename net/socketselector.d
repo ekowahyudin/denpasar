@@ -1,15 +1,19 @@
-﻿module denpasar.net.socketselector;
+module denpasar.net.socketselector;
 
-import core.sync.mutex;
-import core.sync.condition;
 import core.thread;
 import denpasar.core.kernel;
 import denpasar.utils.logger;
 public import std.datetime;
 public import std.socket;
 
+/**
+ * Socket Selector
+ */
 class SocketSelector {
 
+	/**
+	 * singleton instance of SocketSelector
+	 */
 	static SocketSelector instance()
 	{
 		if(!_instanceCreated)
@@ -26,30 +30,38 @@ class SocketSelector {
 		return _instance;
 	}
 
+	/**
+	 * on data ready on socket
+	 */
 	void onDataReady(Socket socket, void delegate(Socket) nothrow callback)
 	{
 		waitEvent(socket, Duration.max, callback, null);
 	}
 
+	/**
+	 * wait for socket event
+	 */
 	void waitEvent(
 		Socket socket, 
 		Duration timeoutDuration, 
 		void delegate(Socket) nothrow onReady,
 		void delegate(Socket) nothrow onTimeout)
 	{
-		lockList();
-		scope(exit)
+		synchronized(this)
 		{
-			unlockList();
+			waitEventNoLock(socket, timeoutDuration, onReady, onTimeout);
 		}
-		waitEventNoLock(socket, timeoutDuration, onReady, onTimeout);
 	}
 
+	/**
+	 * remove socket event listener
+	 */
 	void remove(Socket socket)
 	{
-		lockList;
-		scope(exit) unlockList;
-		removeNoLock(socket);
+		synchronized(this)
+		{
+			removeNoLock(socket);
+		}
 	}
 
 protected:
@@ -80,7 +92,7 @@ protected:
             {
                 if( loadSocketsIntoSocketSet )
                 {
-                    Socket.select(socketSet, null, null, dur!"seconds"(5));
+                    Socket.select(socketSet, null, null, dur!"seconds"(10));
                     checkSocketEvent;
                     socketSet.reset;
                 }
@@ -95,19 +107,18 @@ protected:
 
 	bool loadSocketsIntoSocketSet()
 	{
-		lockList();
-		scope(exit)
+		synchronized(this)
 		{
-			unlockList();
+			return registerSocketNoLock;
 		}
-		return registerSocketNoLock;
 	}
 
 	void checkSocketEvent()
 	{
-		lockList;
-		scope(exit) unlockList;
-		checkSocketEventNoLock;
+		synchronized(this)
+		{
+			checkSocketEventNoLock;
+		}
 	}
 
 	void checkSocketEventNoLock(){
@@ -129,7 +140,7 @@ protected:
 			}
 			else
 			{
-                long timeoutLimit = socketInfo.timeoutLimit;
+                immutable long timeoutLimit = socketInfo.timeoutLimit;
 				if( Clock.currStdTime >= timeoutLimit )
 				{
                     debug
@@ -161,29 +172,15 @@ protected:
 
 		_socketInfos[socket] = socketInfo;
 
-		_hasSocket.notify;
 	}
 
 	bool registerSocketNoLock()
 	{
-		while(!_isTerminated){
-			int count = 0;
-			foreach(Socket socket; _socketInfos.byKey)
-			{
-				_socketSet.add(socket);
-				count++;
-			}
-			if( count > 0 )
-				return true;
-
-			waitForSocketNoLock();
+		foreach(Socket socket; _socketInfos.byKey)
+		{
+			_socketSet.add(socket);
 		}
-		return false;
-	}
-
-	void waitForSocketNoLock()
-	{
-		_hasSocket.wait;
+		return true;
 	}
 
 	void removeNoLock(Socket socket)
@@ -193,24 +190,10 @@ protected:
 
 	void terminate()
 	{
-		lockList;
-		scope(exit) unlockList;
-
-		_isTerminated = true;
-		_hasSocket.notifyAll;
-	}
-
-	void lockList()
-	{
-		while( !_mutex.tryLock )
+		synchronized(this)
 		{
-			Thread.yield;
+			_isTerminated = true;
 		}
-	}
-
-	void unlockList()
-	{
-		_mutex.unlock;
 	}
 
 private:
@@ -218,29 +201,22 @@ private:
 	{
 		debug(SocketSelector)
 		{
-			writeln("creating SocketSelector instance");
+			logDebug("creating SocketSelector instance");
 		}
 		_thread = new Thread(&main);
-		_mutex = new Mutex;
-		_hasSocket = new Condition(_mutex);
 		_thread.start;
 	}
 
 	~this()
 	{
-		_hasSocket.destroy;
-		_mutex.destroy;
-		_thread.join;
 		_thread.destroy;
 		debug(SocketSelector)
 		{
-			writeln("creating SocketSelector destroyed");
+			logDebug("creating SocketSelector destroyed");
 		}
 	}
 
 	Thread _thread=null;
-	Mutex _mutex=null;
-	Condition _hasSocket=null;
 	SocketInfo*[Socket] _socketInfos;
 	bool _isTerminated = false;
 	SocketSet _socketSet=null;

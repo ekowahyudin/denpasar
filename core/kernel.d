@@ -5,6 +5,7 @@ import core.sync.mutex;
 import core.thread;
 import denpasar.base.classes;
 import denpasar.utils.set;
+import denpasar.utils.logger;
 import std.meta;
 import std.stdio;
 import std.traits;
@@ -27,12 +28,13 @@ abstract class Task{
 
 	~this()
 	{
-		debug(KernelTask){
-			writefln("Task destroyed");
+		debug(KernelTask)
+        {
+            logDebug("Task[%d/%s] Destroyed!", id, name);
 		}
 	}
 
-	long id()
+	long id() nothrow
 	{
 		return _id;
 	}
@@ -41,10 +43,17 @@ abstract class Task{
            return _status;
 	}
 
-    public void status(Status value) @property{
+    public void status(Status value) @property
+    {
+        if( _status == value )
+            return;
         _status = value;
         if( value == Status.done )
         {
+            debug(KernelTask)
+            {
+                logDebug("Task[%d/%s] Fulfilled", id, name);
+            }
             fireFulfilled();
         }
     }
@@ -101,6 +110,16 @@ abstract class Task{
 		installEvent(_onDoneThrownSet, dg, this.thrownObject);
 	}
 
+    public string name() @property nothrow
+    {
+        return _name;
+    }
+
+    void name(string value) @property nothrow
+    {
+        _name = value;
+    }
+
 protected:
 
 	void installEvent(Pool, Callback, Args...)(Pool pool, Callback callback, Args args)
@@ -155,7 +174,8 @@ protected:
 	{
         synchronized(this)
         {
-            if( status == Status.executing )
+            Status status = this.status;
+            if( status == Status.executing || status == Status.done)
             {
                 return;
             }
@@ -163,6 +183,11 @@ protected:
             {
                 status = Status.executing;
             }
+        }
+
+        debug(KernelTask)
+        {
+            logDebug("Task[%d/%s] Executing...", id, name);
         }
 
         auto taskManager = TaskManager.instance;
@@ -174,6 +199,11 @@ protected:
             {
                 //no try catch! let parent fiber catch this
                 rawExecute;
+            }
+            catch(Throwable t)
+            {
+                thrownObject = t;
+                throw t;
             }
             finally
             {
@@ -288,7 +318,7 @@ private:
 	Task _next;
 	Task _prev;
 	long _id=0;
-
+    string _name;
 	__gshared
 	{
 		static long _nextTaskId=0;
@@ -594,6 +624,10 @@ protected:
 		task.queueNumber = nextTaskQueue;
 		submitChainNoLock(_futureTasks, task);
 		notifyHasFutureTask();
+        debug(KernelTask)
+        {
+            logDebug("Task[%d/%s] Submitted with queue %d", task.id, task.name, task.queueNumber);
+        }
 		return task;
 	}
 	
@@ -631,10 +665,11 @@ protected:
 		{
 			if( waitIfNoTask && !isTerminated){
 				import core.memory;
-				GC.collect;
-				debug(KernelTask){
-					writeln("Garbage collected. Now waiting for new task.");
-				}
+                debug(KernelTask){
+                    logDebug("Garbage collected. Now waiting for new task.");
+                }
+                GC.collect;
+                GC.minimize;
 				_hasFutureTask.wait();
 				result = peekActiveTaskNoLock(waitIfNoTask);
 			}
@@ -801,57 +836,81 @@ private:
 	}
 }
 
-auto createTask(Func, Args...)(Func func, Args args) nothrow if(is(typeof(func(args))) && !isSafeTask!Func)
+auto createTask(Func, Args...)(string name, Func func, Args args) nothrow if(is(typeof(func(args))) && !isSafeTask!Func)
 {
 	alias Result = typeof(func(args));
-	return new FuncTaskImpl!(Result, Func, Args)(func, args);
+	auto result = new FuncTaskImpl!(Result, Func, Args)(func, args);
+    result.name = name;
+    return result;
 }
 
-@trusted auto createTask(Func, Args...)(Func func, Args args) nothrow if(is(typeof(func(args))) && isSafeTask!Func)
+@trusted auto createTask(Func, Args...)(string name, Func func, Args args) nothrow if(is(typeof(func(args))) && isSafeTask!Func)
 {
 	alias Result = typeof(func(args));
-	return new FuncTaskImpl!(Result, Func, Args)(func, args);
+	auto result = new FuncTaskImpl!(Result, Func, Args)(func, args);
+    result.name = name;
+    return result;
 }
 
-auto createParallelTask(Func, Args...)(Func func, Args args) nothrow if(is(typeof(func(args))) && !isSafeTask!Func)
+auto createParallelTask(Func, Args...)(string name, Func func, Args args) nothrow if(is(typeof(func(args))) && !isSafeTask!Func)
 {
-	auto result = createTask(func, args);
+	auto result = createTask(name, func, args);
 	result._isParallelTask = true;
 	return result;
 }
 
-@trusted auto createParallelTask(Func, Args...)(Func func, Args args) nothrow if(is(typeof(func(args))) && isSafeTask!Func)
+@trusted auto createParallelTask(Func, Args...)(string name, Func func, Args args) nothrow if(is(typeof(func(args))) && isSafeTask!Func)
 {
-	auto result = createTask(func, args);
+	auto result = createTask(name, func, args);
 	result._isParallelTask = true;
 	return result;
 }
 
 auto futureTask(Func, Args...)(Func func, Args args) nothrow if(is(typeof(func(args))) && !isSafeTask!Func)
 {
-	auto result = createTask(func, args);
-	TaskManager.instance.submit(result);
-	return result;
+    return futureTask("", func, args);
 }
 
 @trusted auto futureTask(Func, Args...)(Func func, Args args) nothrow if(is(typeof(func(args))) && isSafeTask!Func)
 {
-	auto result = createTask(func, args);
-	TaskManager.instance.submit(result);
-	return result;
+    return futureTask("", func, args);
+}
+
+auto futureTask(Func, Args...)(string name, Func func, Args args) nothrow if(is(typeof(func(args))) && !isSafeTask!Func)
+{
+    auto result = createTask(name, func, args);
+    TaskManager.instance.submit(result);
+    return result;
+}
+
+@trusted auto futureTask(Func, Args...)(string name, Func func, Args args) nothrow if(is(typeof(func(args))) && isSafeTask!Func)
+{
+    auto result = createTask(name, func, args);
+    TaskManager.instance.submit(result);
+    return result;
 }
 
 auto parallelTask(Func, Args...)(Func func, Args args) nothrow if(is(typeof(func(args))) && !isSafeTask!Func)
 {
-	auto result = createParallelTask(func, args);
-	TaskManager.instance.submit(result);
-	return result;
+    return parallelTask("", func, args);
 }
 
 @trusted auto parallelTask(Func, Args...)(Func func, Args args) nothrow if(is(typeof(func(args))) && isSafeTask!Func)
 {
-	auto result = createParallelTask(func, args);
-	TaskManager.instance.submit(createParallelTask(func, args));
+    return parallelTask("", func, args);
+}
+
+auto parallelTask(Func, Args...)(string name, Func func, Args args) nothrow if(is(typeof(func(args))) && !isSafeTask!Func)
+{
+	auto result = createParallelTask(name, func, args);
+	TaskManager.instance.submit(result);
+	return result;
+}
+
+@trusted auto parallelTask(Func, Args...)(string name, Func func, Args args) nothrow if(is(typeof(func(args))) && isSafeTask!Func)
+{
+	auto result = createParallelTask(name, func, args);
+	TaskManager.instance.submit(result);
 	return result;
 }
 

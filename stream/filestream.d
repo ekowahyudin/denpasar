@@ -13,7 +13,7 @@ enum FileMode{
 	createNew
 }
 
-class FileStream : AbstractStream
+class FileStream : Stream
 {
 	this(OpenModes...)(string filename, OpenModes modes) 
     {
@@ -79,14 +79,14 @@ protected:
         _fileName = value;
     }
 
-    override size_t rawReadAny(void* targetPtr, size_t bytes)
+    override size_t rawGetAny(void* targetPtr, size_t bytes)
     {
         ubyte* ptr = cast(ubyte*) targetPtr;
         ubyte[] result = file.rawRead(ptr[0..bytes]);
         return result.length;
     }
 
-    override size_t rawWriteAny(immutable void* sourcePtr, size_t bytes)
+    override size_t rawPutAny(immutable void* sourcePtr, size_t bytes)
     {
         ubyte* ptr = cast(ubyte*) sourcePtr;
         file.rawWrite(ptr[0..bytes]);
